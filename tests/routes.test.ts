@@ -95,6 +95,9 @@ describe("GET /api/health", () => {
       pin_configured: true,
       corpus_version: expect.any(String),
       chunk_count: CHUNKS.length,
+      // Upstash未設定のテスト環境ではローカル検索で、実接続確認は行わない
+      search_backend: "local",
+      vector_store: { configured: false, reachable: null, namespace_vector_count: null },
     });
   });
 
@@ -225,19 +228,63 @@ describe("POST /api/analyze", () => {
         {
           message: "怪しい連絡",
           answers: [
-            { question: "q1", answer: "a1" },
-            { question: "q2", answer: "a2" },
-            { question: "q3", answer: "a3" },
+            { questionId: "q_org", answer: "a1" },
+            { questionId: "q_request", answer: "a2" },
+            { questionId: "q_channel", answer: "a3" },
           ],
         },
         cookie,
       ),
     );
     expect(tooManyAnswers.status).toBe(400);
+    const unknownQuestionId = await analyzeRoute.POST(
+      jsonRequest(
+        "/api/analyze",
+        "POST",
+        {
+          message: "怪しい連絡",
+          answers: [{ questionId: "not_a_real_id", answer: "a1" }],
+        },
+        cookie,
+      ),
+    );
+    expect(unknownQuestionId.status).toBe(400);
+    const duplicatedQuestionId = await analyzeRoute.POST(
+      jsonRequest(
+        "/api/analyze",
+        "POST",
+        {
+          message: "怪しい連絡",
+          answers: [
+            { questionId: "q_org", answer: "a1" },
+            { questionId: "q_org", answer: "a2" },
+          ],
+        },
+        cookie,
+      ),
+    );
+    expect(duplicatedQuestionId.status).toBe(400);
     const badShape = await analyzeRoute.POST(
       jsonRequest("/api/analyze", "POST", { message: 123 }, cookie),
     );
     expect(badShape.status).toBe(400);
+  });
+
+  it("情報不足のときは固定質問をid付きで返す", async () => {
+    const cookie = await login();
+    mockState.triage = JSON.stringify({
+      category: "consultation",
+      missing: ["q_org"],
+    });
+    const res = await analyzeRoute.POST(
+      jsonRequest("/api/analyze", "POST", { message: "変な連絡が来ました" }, cookie),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("needs_more_info");
+    expect(body.questions).toHaveLength(1);
+    expect(body.questions[0].id).toBe("q_org");
+    expect(typeof body.questions[0].text).toBe("string");
   });
 
   it("OPENAI_API_KEY未設定は503になる", async () => {

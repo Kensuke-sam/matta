@@ -8,6 +8,34 @@ test("初期表示はPINゲートで、横スクロールが発生しない", as
   await expectNoHorizontalScroll(page);
 });
 
+test("PIN付き共有リンクで開くと、PIN入力なしで相談フォームへ直行する", async ({ page }) => {
+  await page.goto(`/#pin=${E2E_PIN}`);
+  await expect(
+    page.getByRole("heading", { name: "いま受けている連絡について教えてください" }),
+  ).toBeVisible();
+  // PINはURLフラグメントから即座に除去される
+  expect(new URL(page.url()).hash).toBe("");
+});
+
+test("誤ったPINの共有リンクは通常のPIN入力へフォールバックする", async ({ page }) => {
+  await page.goto("/#pin=wrong-pin-000");
+  await expect(page.getByRole("heading", { name: "デモ用PINの入力" })).toBeVisible();
+  expect(new URL(page.url()).hash).toBe("");
+});
+
+test("PINゲート表示中にPIN付きリンクへ遷移しても相談フォームへ直行する", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "デモ用PINの入力" })).toBeVisible();
+  // ページを開いたままハッシュだけ変わる遷移（同一タブでの共有リンク再訪）を再現する
+  await page.evaluate((pin) => {
+    window.location.hash = `pin=${pin}`;
+  }, E2E_PIN);
+  await expect(
+    page.getByRole("heading", { name: "いま受けている連絡について教えてください" }),
+  ).toBeVisible();
+  expect(new URL(page.url()).hash).toBe("");
+});
+
 test("誤ったPINはエラーになり、正しいPINで相談フォームが表示される", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("PIN").fill("wrong-pin-000");
@@ -33,4 +61,22 @@ test("ログイン状態はリロード後も維持され、ログアウトでPI
 
   await page.getByRole("button", { name: "ログアウト" }).click();
   await expect(page.getByRole("heading", { name: "デモ用PINの入力" })).toBeVisible();
+});
+
+test("ログアウトに失敗したときはPINゲートへ遷移せずエラーを表示する", async ({ page }) => {
+  await loginWithPin(page);
+
+  await page.route("**/api/session", (route) => {
+    if (route.request().method() === "DELETE") return route.abort();
+    return route.fallback();
+  });
+  await page.getByRole("button", { name: "ログアウト" }).click();
+
+  await expect(
+    page.getByRole("alert").filter({ hasText: "ログアウトに失敗しました" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "いま受けている連絡について教えてください" }),
+  ).toBeVisible();
+  await page.unroute("**/api/session");
 });

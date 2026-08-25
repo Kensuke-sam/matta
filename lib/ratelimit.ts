@@ -8,12 +8,22 @@ type Bucket = { count: number; resetAt: number };
 
 const buckets = new Map<string, Bucket>();
 
+// Mapの単調増加を防ぐ。この件数を超えたら期限切れエントリを掃除する
+const SWEEP_THRESHOLD = 5000;
+
+function sweepExpired(now: number): void {
+  for (const [key, bucket] of buckets) {
+    if (bucket.resetAt <= now) buckets.delete(key);
+  }
+}
+
 export function rateLimit(
   key: string,
   limit: number,
   windowMs: number,
   now: number = Date.now(),
 ): boolean {
+  if (buckets.size > SWEEP_THRESHOLD) sweepExpired(now);
   const bucket = buckets.get(key);
   if (!bucket || bucket.resetAt <= now) {
     buckets.set(key, { count: 1, resetAt: now + windowMs });

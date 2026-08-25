@@ -1,14 +1,18 @@
 import { z } from "zod";
-import { MAX_QUESTIONS } from "./questions";
-import type { QaPair } from "./types";
+import { ANSWER_MAX, MESSAGE_MAX } from "./limits";
+import { isQuestionId, MAX_QUESTIONS } from "./questions";
+import type { AnswerInput } from "./types";
 
-export const MESSAGE_MAX = 2000;
-export const ANSWER_MAX = 500;
-export const QUESTION_TEXT_MAX = 300;
+export { ANSWER_MAX, MESSAGE_MAX };
 
-const qaPairSchema = z.object({
-  question: z.string().trim().min(1).max(QUESTION_TEXT_MAX),
-  answer: z.string().trim().min(1).max(ANSWER_MAX),
+const answerSchema = z.object({
+  questionId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(50)
+    .refine(isQuestionId, "不明な質問IDです"),
+  answer: z.string().trim().min(1, "回答を入力してください").max(ANSWER_MAX),
 });
 
 const analyzeInputSchema = z.object({
@@ -17,10 +21,17 @@ const analyzeInputSchema = z.object({
     .trim()
     .min(1, "相談内容を入力してください")
     .max(MESSAGE_MAX, `相談内容は${MESSAGE_MAX}文字以内で入力してください`),
-  answers: z.array(qaPairSchema).max(MAX_QUESTIONS).optional(),
+  answers: z
+    .array(answerSchema)
+    .max(MAX_QUESTIONS)
+    .refine(
+      (arr) => new Set(arr.map((a) => a.questionId)).size === arr.length,
+      "質問IDが重複しています",
+    )
+    .optional(),
 });
 
-export type ValidatedInput = { message: string; answers: QaPair[] };
+export type ValidatedInput = { message: string; answers: AnswerInput[] };
 
 export type ValidationResult =
   | { ok: true; value: ValidatedInput }

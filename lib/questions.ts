@@ -24,12 +24,16 @@ export function isQuestionId(value: string): value is QuestionId {
   return Object.prototype.hasOwnProperty.call(QUESTION_BANK, value);
 }
 
+export function questionTextById(id: QuestionId): string {
+  return QUESTION_BANK[id];
+}
+
 /** LLMが選んだIDを固定文言に解決する。未知IDは無視し、最大2問に制限する */
-export function resolveQuestions(ids: string[]): string[] {
+export function resolveQuestions(ids: string[]): { id: QuestionId; text: string }[] {
   const seen = new Set<QuestionId>();
   for (const id of ids) {
     if (isQuestionId(id)) seen.add(id);
     if (seen.size >= MAX_QUESTIONS) break;
   }
-  return [...seen].map((id) => QUESTION_BANK[id]);
+  return [...seen].map((id) => ({ id, text: QUESTION_BANK[id] }));
 }

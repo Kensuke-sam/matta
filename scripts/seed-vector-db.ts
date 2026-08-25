@@ -82,7 +82,13 @@ async function main(): Promise<void> {
     CHUNKS.map((chunk, i) => ({
       id: chunk.id,
       vector: vectors[i],
-      metadata: { chunk_id: chunk.id, domain: chunk.domain, corpus_version: CORPUS_VERSION },
+      // 検索側(lib/retrieval.ts)はこの4キーを必須として完全一致検証する
+      metadata: {
+        chunk_id: chunk.id,
+        domain: chunk.domain,
+        corpus_version: CORPUS_VERSION,
+        embedding_model: embeddingModel(),
+      },
     })),
   );
 

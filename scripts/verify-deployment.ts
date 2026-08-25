@@ -19,7 +19,7 @@
  * PINはMATTA_VERIFY_PIN環境変数だけから読み、画面・ログへ出さない。
  * 送信する相談文はすべて架空の固定フィクスチャで、実在の連絡先・個人情報を含まない。
  */
-import { CHUNKS } from "../lib/corpus.ts";
+import { CHUNKS, CORPUS_VERSION } from "../lib/corpus.ts";
 import { DEMOS } from "../lib/demos.ts";
 import type { AnalyzeResponse, Domain, HealthResponse } from "../lib/types.ts";
 
@@ -87,6 +87,11 @@ function parseArgs(argv: string[]): {
   if (!url) {
     fail("--url https://<デプロイ先> を指定してください。");
   }
+  // PIN・Cookieを平文送信しないよう、ローカル以外はHTTPSだけを許可する
+  const isLocal = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(url);
+  if (!url.startsWith("https://") && !isLocal) {
+    fail("httpsのURLを指定してください（httpはlocalhostのみ許可）。");
+  }
   return { url: url.replace(/\/+$/, ""), expectBackend, skipVectorCount };
 }
 
@@ -114,6 +119,8 @@ async function requestJson(
     ...init,
     signal: AbortSignal.timeout(CASE_TIMEOUT_MS),
     cache: "no-store",
+    // PIN・Cookieが別originへ転送されないよう、リダイレクトはエラー扱いにする
+    redirect: "error",
   });
   let body: unknown = null;
   try {
@@ -140,7 +147,17 @@ async function main(): Promise<void> {
   check(h?.ok === true, "health.ok");
   check(h?.openai_configured === true, "OPENAI_API_KEY設定済み");
   check(h?.pin_configured === true, "PIN設定済み");
-  check(h?.chunk_count === 12, "コーパス12チャンク", `chunk_count=${h?.chunk_count}`);
+  check(
+    h?.chunk_count === CHUNKS.length,
+    `コーパス${CHUNKS.length}チャンク`,
+    `chunk_count=${h?.chunk_count}`,
+  );
+  // 古いデプロイ（旧corpus_version）を誤って合格させないための照合
+  check(
+    h?.corpus_version === CORPUS_VERSION,
+    `corpus_versionが手元と一致（${CORPUS_VERSION}）`,
+    `デプロイ側=${h?.corpus_version}`,
+  );
   check(
     h?.search_backend === expectBackend,
     `検索バックエンドが${expectBackend}`,
@@ -151,8 +168,8 @@ async function main(): Promise<void> {
     check(h?.vector_store?.reachable === true, "Vector DBへ接続可能");
     if (!skipVectorCount) {
       check(
-        h?.vector_store?.namespace_vector_count === 12,
-        `namespace "${h?.corpus_version}" にseed 12件`,
+        h?.vector_store?.namespace_vector_count === CHUNKS.length,
+        `namespace "${h?.corpus_version}" にseed ${CHUNKS.length}件`,
         `count=${h?.vector_store?.namespace_vector_count}`,
       );
     }
@@ -230,6 +247,11 @@ async function main(): Promise<void> {
         `実際=${r.search_backend}`,
       );
       check(!r.search_fallback, `${testCase.label}: フォールバックなし`);
+      check(
+        r.corpus_version === CORPUS_VERSION,
+        `${testCase.label}: corpus_version一致`,
+        `デプロイ側=${r.corpus_version}`,
+      );
     }
     if (body.status === "insufficient_evidence" && testCase.expect === "insufficient_evidence") {
       check(
@@ -238,6 +260,11 @@ async function main(): Promise<void> {
         `top_similarity=${body.search?.top_similarity ?? "なし"} < ${body.search?.threshold}`,
       );
       check(body.search?.fallback === false, `${testCase.label}: フォールバックなし`);
+      check(
+        body.search?.corpus_version === CORPUS_VERSION,
+        `${testCase.label}: corpus_version一致`,
+        `デプロイ側=${body.search?.corpus_version}`,
+      );
     }
   }
 

@@ -21,6 +21,21 @@ const defaultDeps: AnalyzeDeps = { embedTexts, chatJson };
 /** これ未満の類似度しか得られない場合は判定せず停止する（環境変数で調整可能） */
 export const MIN_SIMILARITY_DEFAULT = 0.3;
 
+/**
+ * 外部呼び出し（LLM・Embedding・Vector DB）を新たに開始してよい経過時間の上限。
+ * 各クライアントの個別タイムアウト（OpenAI 30秒・Vector 5秒）と合わせて、
+ * リトライを含む逐次連鎖がVercel Functionの上限（analyze routeのmaxDuration=60秒）を
+ * 超えて強制終了されないよう、これを超えたら新しい呼び出しを始めずに
+ * upstream_timeoutとして制御された失敗にする。
+ */
+export const ANALYZE_TIME_BUDGET_MS = 25_000;
+
+function assertTimeBudget(startedAt: number): void {
+  if (Date.now() - startedAt > ANALYZE_TIME_BUDGET_MS) {
+    throw new UpstreamError("upstream_timeout", "analyze time budget exceeded");
+  }
+}
+
 export function minSimilarity(): number {
   const raw = Number(process.env.MATTA_MIN_SIMILARITY);
   return Number.isFinite(raw) && raw > 0 && raw < 1 ? raw : MIN_SIMILARITY_DEFAULT;
@@ -52,8 +67,10 @@ async function callValidated<T>(
   deps: AnalyzeDeps,
   prompts: { system: string; user: string },
   parse: (raw: unknown) => T | null,
+  beforeAttempt: () => void = () => {},
 ): Promise<T> {
   for (let attempt = 0; attempt < 2; attempt++) {
+    beforeAttempt();
     let raw: unknown;
     try {
       raw = extractJson(await deps.chatJson(prompts));
@@ -118,6 +135,9 @@ export async function runAnalyze(
   input: ValidatedInput,
   deps: AnalyzeDeps = defaultDeps,
 ): Promise<AnalyzeResponse> {
+  const startedAt = Date.now();
+  const checkBudget = () => assertTimeBudget(startedAt);
+
   // 個人情報除去: 電話番号・URL・メールアドレスを固定プレースホルダーへ置換し、
   // 以降のすべての外部呼び出し（Embedding・LLM）から除外する
   const redacted: ValidatedInput = {
@@ -134,10 +154,15 @@ export async function runAnalyze(
   const promptInput = toPromptInput(redacted);
 
   // 1. トリアージ: 既遂かどうか、追加質問が必要かを判定する
-  const triage = await callValidated(deps, triagePrompts(promptInput), (raw) => {
-    const parsed = triageSchema.safeParse(raw);
-    return parsed.success ? parsed.data : null;
-  });
+  const triage = await callValidated(
+    deps,
+    triagePrompts(promptInput),
+    (raw) => {
+      const parsed = triageSchema.safeParse(raw);
+      return parsed.success ? parsed.data : null;
+    },
+    checkBudget,
+  );
 
   // 被害後（既遂）: 検索を通さず固定の事故対応カードへ分岐する
   if (triage.category === "incident") {
@@ -155,7 +180,7 @@ export async function runAnalyze(
   // 2. 意味検索: 相談内容をEmbeddingし、公的資料チャンクからTop 3を取得する
   //    （通常はUpstash Vector、ストア障害時だけローカル意味検索へフォールバック。
   //      類似度不足は障害ではないため、フォールバックせずここで根拠不足停止する）
-  const search = await retrieve(buildQueryText(promptInput), deps.embedTexts, TOP_K);
+  const search = await retrieve(buildQueryText(promptInput), deps.embedTexts, TOP_K, checkBudget);
   const retrieved = search.results;
   if (retrieved.length === 0 || retrieved[0].similarity < minSimilarity()) {
     return insufficientResponse(search);
@@ -181,6 +206,7 @@ export async function runAnalyze(
       if (listsContainDisallowedContact(lists)) return null;
       return { unrelated: false as const, value: g };
     },
+    checkBudget,
   );
   if (generation.unrelated) {
     return insufficientResponse(search);

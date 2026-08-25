@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  _resetVectorStoreHealthCache,
   fetchIndexInfo,
+  probeVectorStoreHealth,
   queryVectors,
   upsertVectors,
   upstashScoreToCosine,
@@ -30,6 +32,7 @@ beforeEach(() => {
   process.env.UPSTASH_VECTOR_REST_URL = BASE_URL;
   process.env.UPSTASH_VECTOR_REST_TOKEN = "test-full-token";
   delete process.env.UPSTASH_VECTOR_REST_READONLY_TOKEN;
+  _resetVectorStoreHealthCache();
 });
 
 afterEach(() => {
@@ -159,6 +162,42 @@ describe("upsertVectors", () => {
 
     stubFetch(() => jsonResponse({ result: "Nope" }));
     await expect(upsertVectors("ns-1", [])).rejects.toBeInstanceOf(VectorStoreError);
+  });
+});
+
+describe("probeVectorStoreHealth", () => {
+  const INFO_PAYLOAD = {
+    result: {
+      vectorCount: 12,
+      pendingVectorCount: 0,
+      dimension: 1536,
+      similarityFunction: "COSINE",
+      namespaces: { "2026-08-25.1": { vectorCount: 12, pendingVectorCount: 0 } },
+    },
+  };
+
+  it("接続成功時は件数を返し、結果を短時間キャッシュして外部I/Oを抑える", async () => {
+    const calls = stubFetch(() => jsonResponse(INFO_PAYLOAD));
+    const first = await probeVectorStoreHealth("2026-08-25.1");
+    expect(first).toEqual({ reachable: true, namespaceVectorCount: 12 });
+    const second = await probeVectorStoreHealth("2026-08-25.1");
+    expect(second).toEqual(first);
+    expect(calls).toHaveLength(1);
+
+    _resetVectorStoreHealthCache();
+    await probeVectorStoreHealth("2026-08-25.1");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("未seedのnamespaceは0件、接続失敗はreachable:falseを返す", async () => {
+    stubFetch(() => jsonResponse(INFO_PAYLOAD));
+    const missing = await probeVectorStoreHealth("unknown-namespace");
+    expect(missing).toEqual({ reachable: true, namespaceVectorCount: 0 });
+
+    _resetVectorStoreHealthCache();
+    stubFetch(() => jsonResponse({ error: "x" }, 500));
+    const down = await probeVectorStoreHealth("2026-08-25.1");
+    expect(down).toEqual({ reachable: false, namespaceVectorCount: null });
   });
 });
 

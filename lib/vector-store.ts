@@ -6,8 +6,9 @@
  * 相談内容や認証情報をログへ残さないため、エラーには固定文言だけを入れる。
  */
 
-// 検索1回はREST 1往復のみ。analyze全体の60秒予算を圧迫しないよう短めにする
-const TIMEOUT_MS = 10_000;
+// 検索1回はREST 1往復のみ（通常は数百ms以内）。
+// analyze全体の60秒予算を圧迫しないよう短めにする
+const TIMEOUT_MS = 5_000;
 
 export class VectorStoreError extends Error {
   constructor(message: string) {
@@ -141,6 +142,46 @@ export type VectorIndexInfo = {
   /** namespaceごとの登録済みベクトル数 */
   namespaces: Record<string, { vectorCount: number; pendingVectorCount: number }>;
 };
+
+export type VectorStoreHealth = {
+  reachable: boolean;
+  /** 対象namespaceの登録済みベクトル数（接続不能時はnull） */
+  namespaceVectorCount: number | null;
+};
+
+const HEALTH_CACHE_TTL_MS = 10_000;
+let healthCache: { at: number; namespace: string; health: VectorStoreHealth } | null = null;
+
+/**
+ * healthエンドポイント用の接続確認。
+ * 未認証で連打されても外部I/Oが際限なく増えないよう、結果を短時間キャッシュする。
+ */
+export async function probeVectorStoreHealth(namespace: string): Promise<VectorStoreHealth> {
+  const now = Date.now();
+  if (
+    healthCache &&
+    healthCache.namespace === namespace &&
+    now - healthCache.at < HEALTH_CACHE_TTL_MS
+  ) {
+    return healthCache.health;
+  }
+  let health: VectorStoreHealth;
+  try {
+    const info = await fetchIndexInfo();
+    health = {
+      reachable: true,
+      namespaceVectorCount: info.namespaces[namespace]?.vectorCount ?? 0,
+    };
+  } catch {
+    health = { reachable: false, namespaceVectorCount: null };
+  }
+  healthCache = { at: now, namespace, health };
+  return health;
+}
+
+export function _resetVectorStoreHealthCache(): void {
+  healthCache = null;
+}
 
 export async function fetchIndexInfo(): Promise<VectorIndexInfo> {
   const json = (await request("GET", "/info", readToken())) as { result?: unknown };

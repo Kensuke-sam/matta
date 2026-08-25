@@ -31,6 +31,9 @@ describe("detectCompletedIncident", () => {
       "まだ何も渡していません。",
       "URLを開こうか迷っています。",
       "パスワードを教えてくださいと言われました。",
+      // 相手の発言の引用（疑問形）は既遂ではない
+      "相手から「もう振り込みましたか」と聞かれています。",
+      "「すでに支払いましたよね」と確認されました。",
     ];
     for (const message of negatives) {
       expect(detectCompletedIncident(input(message)), message).toBe(false);
@@ -55,6 +58,14 @@ describe("detectCompletedIncident", () => {
       detectCompletedIncident(
         input("怪しい電話がありました", [
           { questionId: "q_done", answer: "いいえ、まだです" },
+        ]),
+      ),
+    ).toBe(false);
+    // 肯定語で始まっても内容が否定なら既遂にしない
+    expect(
+      detectCompletedIncident(
+        input("怪しい電話がありました", [
+          { questionId: "q_done", answer: "はい、まだ渡していません" },
         ]),
       ),
     ).toBe(false);

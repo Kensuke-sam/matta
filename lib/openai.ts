@@ -94,6 +94,9 @@ export const embedTexts: EmbedFn = async (texts) => {
   const vectors: number[][] = new Array(texts.length);
   const seen = new Set<number>();
   for (const item of data) {
+    if (item === null || typeof item !== "object") {
+      throw new UpstreamError("upstream_error", "unexpected embeddings item");
+    }
     const index = item.index;
     if (
       typeof index !== "number" ||

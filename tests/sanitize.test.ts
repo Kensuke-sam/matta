@@ -17,6 +17,20 @@ describe("containsDisallowedContact", () => {
     expect(containsDisallowedContact("03-1234-5678までご連絡ください")).toBe(true);
     expect(containsDisallowedContact("09012345678に電話")).toBe(true);
     expect(containsDisallowedContact("#1234へダイヤル")).toBe(true);
+    // 空白・括弧・国際表記の区切りも検出する
+    expect(containsDisallowedContact("090 1234 5678へ電話")).toBe(true);
+    expect(containsDisallowedContact("03(1234)5678までご連絡ください")).toBe(true);
+    expect(containsDisallowedContact("+81-90-1234-5678へ折り返し")).toBe(true);
+    expect(containsDisallowedContact("+819012345678に電話")).toBe(true);
+  });
+
+  it("URL・メールアドレスも許可外連絡先として検出する", () => {
+    expect(containsDisallowedContact("詳しくは https://example.com/x を確認")).toBe(true);
+    expect(containsDisallowedContact("soudan@example.jp へ連絡してください")).toBe(true);
+    expect(containsDisallowedContact("公式アプリから荷物を確認する")).toBe(false);
+    // /gフラグのlastIndex残留で判定が交互に狂わないこと
+    expect(containsDisallowedContact("https://example.com/x を確認")).toBe(true);
+    expect(containsDisallowedContact("https://example.com/x を確認")).toBe(true);
   });
 
   it("全角数字・全角区切りも正規化して検出する", () => {
@@ -58,6 +72,25 @@ describe("redactContactInfo", () => {
   it("全角の電話番号も正規化して置換する", () => {
     expect(redactContactInfo("０１２０－１１１－２２２へかけてしまいそう")).toBe(
       "[電話番号]へかけてしまいそう",
+    );
+  });
+
+  it("空白・括弧・国際表記の電話番号も置換する", () => {
+    expect(redactContactInfo("090 1234 5678から着信")).toBe("[電話番号]から着信");
+    expect(redactContactInfo("03(1234)5678へ折り返せと言われた")).toBe(
+      "[電話番号]へ折り返せと言われた",
+    );
+    expect(redactContactInfo("+81-90-1234-5678に電話しろと言われた")).toBe(
+      "[電話番号]に電話しろと言われた",
+    );
+  });
+
+  it("パス付きの裸ドメインは置換し、パスなしの事業者ドメイン言及は残す", () => {
+    expect(redactContactInfo("example-delivery.jp/aB3 を開けと言われた")).toBe(
+      "[URL] を開けと言われた",
+    );
+    expect(redactContactInfo("amazon.co.jpからのメールだと名乗っています")).toBe(
+      "amazon.co.jpからのメールだと名乗っています",
     );
   });
 

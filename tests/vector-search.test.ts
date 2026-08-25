@@ -1,23 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CHUNKS, CORPUS_VERSION } from "@/lib/corpus";
 import type { EmbedFn } from "@/lib/openai";
-import type { VectorIndexInfo, VectorQueryMatch } from "@/lib/vector-store";
-
-const EMPTY_INFO: VectorIndexInfo = { dimension: null, similarityFunction: null, namespaces: {} };
+import type { VectorQueryMatch, VectorStoreHealth } from "@/lib/vector-store";
 
 const vectorMock = vi.hoisted(() => ({
   configured: false,
   queryCalls: [] as { namespace: string; topK: number }[],
+  probeCalls: 0,
   query: (async () => []) as (
     namespace: string,
     vector: number[],
     topK: number,
   ) => Promise<{ id: string; similarity: number; metadata: Record<string, unknown> | null }[]>,
-  info: (async () => ({
-    dimension: null,
-    similarityFunction: null,
-    namespaces: {},
-  })) as () => Promise<VectorIndexInfo>,
+  probe: (async () => ({ reachable: false, namespaceVectorCount: null })) as () => Promise<{
+    reachable: boolean;
+    namespaceVectorCount: number | null;
+  }>,
 }));
 
 vi.mock("@/lib/vector-store", async (importOriginal) => {
@@ -29,7 +27,10 @@ vi.mock("@/lib/vector-store", async (importOriginal) => {
       vectorMock.queryCalls.push({ namespace, topK });
       return vectorMock.query(namespace, vector, topK);
     },
-    fetchIndexInfo: () => vectorMock.info(),
+    probeVectorStoreHealth: (): Promise<VectorStoreHealth> => {
+      vectorMock.probeCalls += 1;
+      return vectorMock.probe();
+    },
   };
 });
 
@@ -50,11 +51,17 @@ function rankedEmbed(): { embed: EmbedFn; calls: string[][] } {
   return { embed, calls };
 }
 
+// seedが書き込む4キーのメタデータを持つ正常なmatch（検索側の必須検証を通る形）
 function upstashMatch(id: string, similarity: number): VectorQueryMatch {
   return {
     id,
     similarity,
-    metadata: { chunk_id: id, domain: "police", corpus_version: CORPUS_VERSION },
+    metadata: {
+      chunk_id: id,
+      domain: "police",
+      corpus_version: CORPUS_VERSION,
+      embedding_model: "text-embedding-3-small",
+    },
   };
 }
 
@@ -62,9 +69,11 @@ beforeEach(() => {
   _resetCorpusCache();
   vectorMock.configured = false;
   vectorMock.queryCalls = [];
+  vectorMock.probeCalls = 0;
   vectorMock.query = async () => [];
-  vectorMock.info = async () => EMPTY_INFO;
+  vectorMock.probe = async () => ({ reachable: false, namespaceVectorCount: null });
   delete process.env.MATTA_SEARCH_BACKEND;
+  delete process.env.MATTA_EMBEDDING_MODEL;
 });
 
 afterEach(() => {
@@ -121,12 +130,28 @@ describe("retrieve", () => {
 
   it("類似度が低くてもフォールバックしない（根拠不足は呼び出し側で停止する）", async () => {
     vectorMock.configured = true;
-    vectorMock.query = async () => [upstashMatch("police-1", 0.05)];
+    vectorMock.query = async () => [
+      upstashMatch("police-1", 0.05),
+      upstashMatch("police-2", 0.04),
+      upstashMatch("police-3", 0.03),
+    ];
     const { embed } = rankedEmbed();
     const outcome = await retrieve("query", embed);
     expect(outcome.backend).toBe("upstash");
     expect(outcome.fallback).toBe(false);
     expect(outcome.results[0].similarity).toBe(0.05);
+  });
+
+  it("外部呼び出し直前フックが例外を投げたらそのまま伝播する（フォールバックしない）", async () => {
+    vectorMock.configured = true;
+    const { embed } = rankedEmbed();
+    const budgetError = new Error("time budget exceeded");
+    await expect(
+      retrieve("query", embed, 3, () => {
+        throw budgetError;
+      }),
+    ).rejects.toBe(budgetError);
+    expect(vectorMock.queryCalls).toHaveLength(0);
   });
 
   // ストア異常の各系: ローカル検索へフォールバックし、フォールバックであることを記録する
@@ -152,13 +177,43 @@ describe("retrieve", () => {
 
   it("0件応答はストア異常としてフォールバックする", () => expectFallbackToLocal(async () => []));
 
+  it("件数不足（Top 3に満たない）はフォールバックする", () =>
+    expectFallbackToLocal(async () => [upstashMatch("police-1", 0.9)]));
+
+  it("重複IDはフォールバックする", () =>
+    expectFallbackToLocal(async () => [
+      upstashMatch("police-1", 0.9),
+      upstashMatch("police-1", 0.8),
+      upstashMatch("police-2", 0.7),
+    ]));
+
   it("未知のチャンクIDはフォールバックする", () =>
-    expectFallbackToLocal(async () => [upstashMatch("unknown-id", 0.9)]));
+    expectFallbackToLocal(async () => [
+      upstashMatch("unknown-id", 0.9),
+      upstashMatch("police-1", 0.8),
+      upstashMatch("police-2", 0.7),
+    ]));
+
+  it("メタデータ欠落はフォールバックする", () =>
+    expectFallbackToLocal(async () => [
+      { id: "police-1", similarity: 0.9, metadata: null },
+      upstashMatch("police-2", 0.8),
+      upstashMatch("police-3", 0.7),
+    ]));
 
   it("corpus_version不一致はフォールバックする", () =>
-    expectFallbackToLocal(async () => [
-      { id: "police-1", similarity: 0.9, metadata: { corpus_version: "old-version" } },
-    ]));
+    expectFallbackToLocal(async () => {
+      const stale = upstashMatch("police-1", 0.9);
+      stale.metadata = { ...(stale.metadata ?? {}), corpus_version: "old-version" };
+      return [stale, upstashMatch("police-2", 0.8), upstashMatch("police-3", 0.7)];
+    }));
+
+  it("Embeddingモデル不一致（同次元の別モデルの古いベクトル）はフォールバックする", () =>
+    expectFallbackToLocal(async () => {
+      const staleModel = upstashMatch("police-1", 0.9);
+      staleModel.metadata = { ...(staleModel.metadata ?? {}), embedding_model: "other-model" };
+      return [staleModel, upstashMatch("police-2", 0.8), upstashMatch("police-3", 0.7)];
+    }));
 
   it("VectorStoreError以外の例外はフォールバックせず伝播する", async () => {
     vectorMock.configured = true;
@@ -178,11 +233,7 @@ describe("/api/health のVector DB状態", () => {
 
   it("upstashバックエンド時は実接続とseed件数を報告する", async () => {
     vectorMock.configured = true;
-    vectorMock.info = async () => ({
-      dimension: 1536,
-      similarityFunction: "COSINE",
-      namespaces: { [CORPUS_VERSION]: { vectorCount: 12, pendingVectorCount: 0 } },
-    });
+    vectorMock.probe = async () => ({ reachable: true, namespaceVectorCount: 12 });
     const body = await (await healthRoute.GET()).json();
     expect(body.search_backend).toBe("upstash");
     expect(body.vector_store).toEqual({
@@ -194,9 +245,7 @@ describe("/api/health のVector DB状態", () => {
 
   it("接続失敗時はreachable:falseを報告する", async () => {
     vectorMock.configured = true;
-    vectorMock.info = async () => {
-      throw new VectorStoreError("down");
-    };
+    vectorMock.probe = async () => ({ reachable: false, namespaceVectorCount: null });
     const body = await (await healthRoute.GET()).json();
     expect(body.vector_store).toEqual({
       configured: true,
@@ -207,11 +256,7 @@ describe("/api/health のVector DB状態", () => {
 
   it("未seedのnamespaceは0件として報告する", async () => {
     vectorMock.configured = true;
-    vectorMock.info = async () => ({
-      dimension: 1536,
-      similarityFunction: "COSINE",
-      namespaces: {},
-    });
+    vectorMock.probe = async () => ({ reachable: true, namespaceVectorCount: 0 });
     const body = await (await healthRoute.GET()).json();
     expect(body.vector_store.namespace_vector_count).toBe(0);
   });
@@ -219,11 +264,6 @@ describe("/api/health のVector DB状態", () => {
   it("local明示切替時は設定があっても実接続確認しない", async () => {
     vectorMock.configured = true;
     process.env.MATTA_SEARCH_BACKEND = "local";
-    let infoCalled = false;
-    vectorMock.info = async () => {
-      infoCalled = true;
-      return EMPTY_INFO;
-    };
     const body = await (await healthRoute.GET()).json();
     expect(body.search_backend).toBe("local");
     expect(body.vector_store).toEqual({
@@ -231,6 +271,6 @@ describe("/api/health のVector DB状態", () => {
       reachable: null,
       namespace_vector_count: null,
     });
-    expect(infoCalled).toBe(false);
+    expect(vectorMock.probeCalls).toBe(0);
   });
 });

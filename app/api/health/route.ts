@@ -4,7 +4,7 @@ import { openaiConfigured } from "@/lib/openai";
 import { configuredSearchBackend } from "@/lib/retrieval";
 import { pinConfigured } from "@/lib/session";
 import type { HealthResponse } from "@/lib/types";
-import { fetchIndexInfo, vectorStoreConfigured } from "@/lib/vector-store";
+import { probeVectorStoreHealth, vectorStoreConfigured } from "@/lib/vector-store";
 
 export async function GET(): Promise<Response> {
   const searchBackend = configuredSearchBackend();
@@ -12,14 +12,11 @@ export async function GET(): Promise<Response> {
   let reachable: boolean | null = null;
   let namespaceVectorCount: number | null = null;
   // upstashバックエンド時だけ実接続を確認し、seed済み件数を報告する
+  // （未認証エンドポイントのため、プローブ結果は短時間キャッシュされる）
   if (searchBackend === "upstash" && configured) {
-    try {
-      const info = await fetchIndexInfo();
-      reachable = true;
-      namespaceVectorCount = info.namespaces[CORPUS_VERSION]?.vectorCount ?? 0;
-    } catch {
-      reachable = false;
-    }
+    const vectorHealth = await probeVectorStoreHealth(CORPUS_VERSION);
+    reachable = vectorHealth.reachable;
+    namespaceVectorCount = vectorHealth.namespaceVectorCount;
   }
   const body: HealthResponse = {
     ok: true,

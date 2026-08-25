@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { minSimilarity, runAnalyze } from "@/lib/analyze";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ANALYZE_TIME_BUDGET_MS, minSimilarity, runAnalyze } from "@/lib/analyze";
 import type { AnalyzeDeps } from "@/lib/analyze";
 import { CHUNKS } from "@/lib/corpus";
 import { UpstreamError } from "@/lib/openai";
@@ -284,6 +284,24 @@ describe("runAnalyze: 入力の個人情報除去", () => {
     const externalTexts = [...embedCalls.flat(), ...chatCalls.map((c) => c.user)].join("\n");
     expect(externalTexts).not.toContain("03-1234-5678");
     expect(externalTexts).toContain("[電話番号]");
+  });
+});
+
+describe("runAnalyze: 時間予算", () => {
+  it("経過時間が予算を超えたら新しい外部呼び出しを始めず、upstream_timeoutで停止する", async () => {
+    const { deps, chatCalls } = makeDeps();
+    const nowSpy = vi.spyOn(Date, "now");
+    nowSpy.mockReturnValueOnce(0); // runAnalyzeのstartedAt
+    nowSpy.mockReturnValue(ANALYZE_TIME_BUDGET_MS + 1); // 以降の予算チェック
+    try {
+      await expect(
+        runAnalyze(input("警察を名乗る電話が来ました"), deps),
+      ).rejects.toMatchObject({ code: "upstream_timeout" });
+      // 予算超過後はLLMを一度も呼ばない
+      expect(chatCalls).toHaveLength(0);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });
 

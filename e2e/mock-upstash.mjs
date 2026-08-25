@@ -10,6 +10,8 @@ import { createServer } from "node:http";
 const PORT = Number(process.env.MOCK_UPSTASH_PORT ?? 8966);
 // 実アプリのcorpus_versionと一致させる（playwright.config.tsがlib/corpus.tsから渡す）
 const NAMESPACE = process.env.MOCK_UPSTASH_NAMESPACE ?? "";
+// 実アプリのembeddingModel()既定値と一致させる（アプリ側metadata必須検証の対象）
+const EMBEDDING_MODEL = process.env.MOCK_UPSTASH_EMBEDDING_MODEL ?? "text-embedding-3-small";
 
 // lib/corpus.tsのチャンクID・domain・並び順と対応させる
 const CORPUS = [
@@ -113,6 +115,7 @@ const server = createServer(async (req, res) => {
               chunk_id: item.id,
               domain: item.domain,
               corpus_version: NAMESPACE,
+              embedding_model: EMBEDDING_MODEL,
             },
           }
         : {}),

@@ -47,4 +47,7 @@ test("圏外入力はUpstash検索でも類似度不足で停止し、フォー�
   await expect(inspector.getByTestId("search-backend")).toHaveText("Upstash Vector");
   await expect(inspector.getByTestId("search-fallback")).toBeHidden();
   await expect(inspector.getByTestId("top-similarity")).toHaveText(/^\d\.\d{3}$/);
+  // 表示上も「最上位類似度 < 停止閾値(0.3)」の関係が成り立っている
+  const topSimilarity = Number(await inspector.getByTestId("top-similarity").textContent());
+  expect(topSimilarity).toBeLessThan(0.3);
 });

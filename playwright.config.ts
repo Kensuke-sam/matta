@@ -48,6 +48,9 @@ export default defineConfig({
       },
     },
   ],
+  // 注: e2eの正式な入口は `npm run test:e2e`（next build && playwright test）。
+  // 下のnext startは既存の.nextをそのまま起動するため、
+  // `npx playwright test` を単体実行する場合は先にbuildしておくこと
   webServer: [
     {
       command: "node e2e/mock-openai.mjs",

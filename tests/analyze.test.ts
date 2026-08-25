@@ -64,6 +64,8 @@ function input(message: string, answers: ValidatedInput["answers"] = []): Valida
 beforeEach(() => {
   _resetCorpusCache();
   delete process.env.MATTA_MIN_SIMILARITY;
+  // 実行環境のシェルにUpstash設定が入っていても実ネットワークへ出ないよう固定する
+  process.env.MATTA_SEARCH_BACKEND = "local";
 });
 
 describe("minSimilarity", () => {
@@ -303,6 +305,25 @@ describe("runAnalyze: 時間予算", () => {
       nowSpy.mockRestore();
     }
   });
+
+  it("途中の段階（トリアージ後）で超過しても、検索を始めずに停止する", async () => {
+    const { deps, chatCalls, embedCalls } = makeDeps();
+    const nowSpy = vi.spyOn(Date, "now");
+    nowSpy
+      .mockReturnValueOnce(0) // startedAt
+      .mockReturnValueOnce(1000); // トリアージ直前のチェック（予算内）
+    nowSpy.mockReturnValue(ANALYZE_TIME_BUDGET_MS + 1); // 検索直前のチェックで超過
+    try {
+      await expect(
+        runAnalyze(input("警察を名乗る電話が来ました"), deps),
+      ).rejects.toMatchObject({ code: "upstream_timeout" });
+      // トリアージは実行済み・検索（Embedding）は未実行
+      expect(chatCalls.filter((c) => c.kind === "triage")).toHaveLength(1);
+      expect(embedCalls).toHaveLength(0);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });
 
 describe("runAnalyze: 生成出力の安全フィルタ", () => {
@@ -335,6 +356,25 @@ describe("runAnalyze: 生成出力の安全フィルタ", () => {
     });
     const res = await runAnalyze(input("警察を名乗る電話が来ました"), deps);
     expect(res.status).toBe("complete");
+  });
+
+  it("URLを含む出力も許可外連絡先として不採用にし、リトライで回復できる", async () => {
+    let count = 0;
+    const { deps } = makeDeps({
+      generation: () => {
+        count += 1;
+        if (count === 1) {
+          return JSON.stringify({
+            ...VALID_GENERATION,
+            safe_verification: ["https://evil.example/verify で確認する"],
+          });
+        }
+        return JSON.stringify(VALID_GENERATION);
+      },
+    });
+    const res = await runAnalyze(input("警察を名乗る電話が来ました"), deps);
+    expect(res.status).toBe("complete");
+    expect(count).toBe(2);
   });
 
   it("公式窓口の番号（#9110・188・110）は通過する", async () => {

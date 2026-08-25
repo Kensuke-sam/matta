@@ -58,7 +58,7 @@ function upstashMatch(id: string, similarity: number): VectorQueryMatch {
     similarity,
     metadata: {
       chunk_id: id,
-      domain: "police",
+      domain: CHUNKS.find((c) => c.id === id)?.domain ?? "police",
       corpus_version: CORPUS_VERSION,
       embedding_model: "text-embedding-3-small",
     },
@@ -215,6 +215,59 @@ describe("retrieve", () => {
       return [staleModel, upstashMatch("police-2", 0.8), upstashMatch("police-3", 0.7)];
     }));
 
+  it("外側IDが有効でもmetadata.chunk_idが別IDならフォールバックする", () =>
+    expectFallbackToLocal(async () => {
+      const mismatched = upstashMatch("police-1", 0.9);
+      mismatched.metadata = { ...(mismatched.metadata ?? {}), chunk_id: "police-2" };
+      return [mismatched, upstashMatch("police-2", 0.8), upstashMatch("police-3", 0.7)];
+    }));
+
+  it("domain不一致はフォールバックする", () =>
+    expectFallbackToLocal(async () => {
+      const wrongDomain = upstashMatch("police-1", 0.9);
+      wrongDomain.metadata = { ...(wrongDomain.metadata ?? {}), domain: "delivery" };
+      return [wrongDomain, upstashMatch("police-2", 0.8), upstashMatch("police-3", 0.7)];
+    }));
+
+  it("必須メタデータキーの欠落（embedding_modelなし）はフォールバックする", () =>
+    expectFallbackToLocal(async () => {
+      const missingKey = upstashMatch("police-1", 0.9);
+      const meta = { ...(missingKey.metadata ?? {}) };
+      delete meta.embedding_model;
+      missingKey.metadata = meta;
+      return [missingKey, upstashMatch("police-2", 0.8), upstashMatch("police-3", 0.7)];
+    }));
+
+  it("外部呼び出し直前フックはembed→vector検索の各直前に呼ばれ、フォールバック時はローカルembed前にも呼ばれる", async () => {
+    vectorMock.configured = true;
+    const events: string[] = [];
+    const embed: EmbedFn = async (texts) => {
+      events.push(texts.length === CHUNKS.length ? "embed-corpus" : "embed-query");
+      if (texts.length === CHUNKS.length) {
+        return texts.map((_, i) => [1, 0, 0, 0.1 * i]);
+      }
+      return texts.map(() => [1, 0, 0, 0]);
+    };
+    const hook = () => events.push("hook");
+
+    // 正常経路: hook→クエリembed→hook→vector検索
+    vectorMock.query = async () => {
+      events.push("query");
+      return [upstashMatch("police-1", 0.9), upstashMatch("police-2", 0.8), upstashMatch("police-3", 0.7)];
+    };
+    await retrieve("query", embed, 3, hook);
+    expect(events).toEqual(["hook", "embed-query", "hook", "query"]);
+
+    // フォールバック経路: 上記に加えて、ローカルのコーパスembed直前にもhookが入る
+    events.length = 0;
+    vectorMock.query = async () => {
+      events.push("query");
+      throw new VectorStoreError("down");
+    };
+    await retrieve("query", embed, 3, hook);
+    expect(events).toEqual(["hook", "embed-query", "hook", "query", "hook", "embed-corpus"]);
+  });
+
   it("VectorStoreError以外の例外はフォールバックせず伝播する", async () => {
     vectorMock.configured = true;
     vectorMock.query = async () => {
@@ -241,6 +294,7 @@ describe("/api/health のVector DB状態", () => {
       reachable: true,
       namespace_vector_count: 12,
     });
+    expect(vectorMock.probeCalls).toBe(1);
   });
 
   it("接続失敗時はreachable:falseを報告する", async () => {

@@ -41,6 +41,7 @@ import * as analyzeRoute from "@/app/api/analyze/route";
 import * as healthRoute from "@/app/api/health/route";
 import * as sessionRoute from "@/app/api/session/route";
 import { UpstreamError } from "@/lib/openai";
+import { QUESTION_BANK } from "@/lib/questions";
 import { _resetRateLimit, SESSION_RATE } from "@/lib/ratelimit";
 import { _resetCorpusCache } from "@/lib/retrieval";
 import { SESSION_COOKIE } from "@/lib/session";
@@ -72,6 +73,8 @@ async function login(): Promise<string> {
 
 beforeEach(() => {
   process.env.MATTA_DEMO_PIN = TEST_PIN;
+  // 実行環境のシェルにUpstash設定が入っていても実ネットワークへ出ないよう固定する
+  process.env.MATTA_SEARCH_BACKEND = "local";
   mockState.openaiConfigured = true;
   mockState.chatError = null;
   mockState.triage = JSON.stringify({ category: "consultation", missing: [] });
@@ -284,7 +287,7 @@ describe("POST /api/analyze", () => {
     expect(body.status).toBe("needs_more_info");
     expect(body.questions).toHaveLength(1);
     expect(body.questions[0].id).toBe("q_org");
-    expect(typeof body.questions[0].text).toBe("string");
+    expect(body.questions[0].text).toBe(QUESTION_BANK.q_org);
   });
 
   it("OPENAI_API_KEY未設定は503になる", async () => {

@@ -116,11 +116,13 @@ function resolveVectorMatches(matches: VectorQueryMatch[], k: number): Retrieved
       throw new VectorStoreError("vector store returned duplicate chunk ids");
     }
     seenIds.add(match.id);
-    // seed(scripts/seed-vector-db.ts)が必ず書き込むメタデータを必須とする
+    // seed(scripts/seed-vector-db.ts)が必ず書き込む4キーのメタデータを必須とし、
+    // コーパス正本と完全一致することを検証する
     const meta = match.metadata;
     if (
       meta === null ||
       meta.chunk_id !== chunk.id ||
+      meta.domain !== chunk.domain ||
       meta.corpus_version !== CORPUS_VERSION ||
       meta.embedding_model !== embeddingModel()
     ) {

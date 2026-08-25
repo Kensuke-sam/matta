@@ -143,7 +143,12 @@ describe("queryVectors", () => {
   it("応答形状の異常（非配列・不正スコア・不正ID）はVectorStoreErrorになる", async () => {
     stubFetch(() => jsonResponse({ result: "not-an-array" }));
     await expect(queryVectors("ns", [1], 3)).rejects.toBeInstanceOf(VectorStoreError);
+    // scoreは[0,1]の範囲外・非数値をクランプせず拒否する
     stubFetch(() => jsonResponse({ result: [{ id: "a", score: 1.5 }] }));
+    await expect(queryVectors("ns", [1], 3)).rejects.toBeInstanceOf(VectorStoreError);
+    stubFetch(() => jsonResponse({ result: [{ id: "a", score: -0.01 }] }));
+    await expect(queryVectors("ns", [1], 3)).rejects.toBeInstanceOf(VectorStoreError);
+    stubFetch(() => jsonResponse({ result: [{ id: "a", score: null }] }));
     await expect(queryVectors("ns", [1], 3)).rejects.toBeInstanceOf(VectorStoreError);
     stubFetch(() => jsonResponse({ result: [{ id: "", score: 0.5 }] }));
     await expect(queryVectors("ns", [1], 3)).rejects.toBeInstanceOf(VectorStoreError);

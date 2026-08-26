@@ -14,15 +14,33 @@
 // これにより (03)1234-5678 / 03-12345678 / +81 (0)3 1234 5678 等の一般表記を捕捉しつつ、
 // 年号・金額（2026年・5000円）や郵便番号・短い数字列を誤検出しない。
 // （NFKCで全角数字・全角括弧・全角空白は半角へ正規化済みの前提）
-// 既知の限界: 空白区切りの電話番号2つが句読点なしで連続する文は1候補に融合し
-// 桁数検証で外れる（置換されない）。句読点・助詞があれば正しく分割される。
+// 候補が電話番号+他の数字列（確認コード等）と融合した場合は、
+// splitLeadingPhoneで有効な先頭電話番号部分だけを切り出して回復する
 const PHONE_CANDIDATE_RE = /(?<![\d#+])[(]?(?:\+81|0)[\d()\-‐－ー\s]{6,16}\d|#\d{3,5}/g;
 
 function isPhoneLike(candidate: string): boolean {
   if (candidate.startsWith("#")) return true;
   const digits = candidate.replace(/\D/g, "");
-  if (candidate.includes("+81")) return digits.length >= 12 && digits.length <= 13;
+  if (candidate.includes("+81")) {
+    // +81表記は国番号81と先頭0の省略を除いた国内部分で判定する
+    // （固定電話9桁・携帯等10桁。例: +81-3-1234-5678 / +81 (0)90 1234 5678）
+    const national = digits.replace(/^81/, "").replace(/^0/, "");
+    return national.length >= 9 && national.length <= 10;
+  }
   return digits.length >= 10 && digits.length <= 11;
+}
+
+/**
+ * 桁数超過の候補（電話番号+確認コード等が融合した並び）から、
+ * 有効な電話番号となる最長の先頭部分を探す。見つからなければnull。
+ */
+function splitLeadingPhone(candidate: string): { phone: string; rest: string } | null {
+  for (let end = candidate.length - 2; end >= 6; end--) {
+    if (!/\d/.test(candidate[end])) continue;
+    const head = candidate.slice(0, end + 1);
+    if (isPhoneLike(head)) return { phone: head, rest: candidate.slice(end + 1) };
+  }
+  return null;
 }
 
 const ALLOWED = new Set(["#9110"]);
@@ -30,7 +48,8 @@ const ALLOWED = new Set(["#9110"]);
 export function containsDisallowedContact(text: string): boolean {
   const normalized = text.normalize("NFKC");
   for (const match of normalized.matchAll(PHONE_CANDIDATE_RE)) {
-    if (isPhoneLike(match[0]) && !ALLOWED.has(match[0])) return true;
+    if (ALLOWED.has(match[0])) continue;
+    if (isPhoneLike(match[0]) || splitLeadingPhone(match[0]) !== null) return true;
   }
   // 生成出力には連絡先を固定文言（SAFE_CONTACTS）以外で含めさせない:
   // URL・メールアドレスらしき文字列も注入・幻覚のシグナルとして拒否する。
@@ -60,12 +79,22 @@ const URL_RE =
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 
+function redactPhones(text: string): string {
+  return text.replace(PHONE_CANDIDATE_RE, (match) => {
+    if (ALLOWED.has(match)) return match;
+    if (isPhoneLike(match)) return "[電話番号]";
+    // 電話番号+確認コード等の融合候補は、先頭の電話番号部分だけを置換し、
+    // 残りにも別の電話番号が続き得るため再帰的に処理する
+    const split = splitLeadingPhone(match);
+    if (split) return `[電話番号]${redactPhones(split.rest)}`;
+    return match;
+  });
+}
+
 export function redactContactInfo(text: string): string {
   let result = text.normalize("NFKC");
   result = result.replace(URL_RE, "[URL]");
   result = result.replace(EMAIL_RE, "[メールアドレス]");
-  result = result.replace(PHONE_CANDIDATE_RE, (match) =>
-    isPhoneLike(match) && !ALLOWED.has(match) ? "[電話番号]" : match,
-  );
+  result = redactPhones(result);
   return result;
 }

@@ -26,6 +26,10 @@ describe("containsDisallowedContact", () => {
     expect(containsDisallowedContact("(03)1234-5678へ電話してください")).toBe(true);
     expect(containsDisallowedContact("03-12345678までご連絡ください")).toBe(true);
     expect(containsDisallowedContact("+81 (0)3 1234 5678へ折り返し")).toBe(true);
+    // +81の固定電話（国内部分9桁）も検出する
+    expect(containsDisallowedContact("+81-3-1234-5678へ連絡")).toBe(true);
+    // 電話番号+確認コード等が融合した並びも、先頭の電話番号部分で検出する
+    expect(containsDisallowedContact("090-1234-5678 123456 を入力してください")).toBe(true);
   });
 
   it("URL・メールアドレスも許可外連絡先として検出する", () => {
@@ -96,6 +100,20 @@ describe("redactContactInfo", () => {
     );
     expect(redactContactInfo("+81 (0)3 1234 5678に電話しろと言われた")).toBe(
       "[電話番号]に電話しろと言われた",
+    );
+    // +81の固定電話（国内部分9桁）も置換する
+    expect(redactContactInfo("+81-3-1234-5678へ連絡しろと言われた")).toBe(
+      "[電話番号]へ連絡しろと言われた",
+    );
+  });
+
+  it("電話番号と確認コード等が融合した並びは、電話番号部分だけを置換する", () => {
+    expect(redactContactInfo("090-1234-5678 123456 を入力しろと言われた")).toBe(
+      "[電話番号] 123456 を入力しろと言われた",
+    );
+    // 改行区切りで別の数値が続く場合も電話番号部分は置換される
+    expect(redactContactInfo("連絡先は090-1234-5678\n1234 と言われた")).toBe(
+      "連絡先は[電話番号]\n1234 と言われた",
     );
   });
 

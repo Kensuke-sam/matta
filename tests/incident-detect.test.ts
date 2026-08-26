@@ -88,4 +88,34 @@ describe("detectCompletedIncident", () => {
       ),
     ).toBe(true);
   });
+
+  it("引用・疑問・仮定・規範の完了表現は既遂にせず、LLMトリアージへ委ねる", () => {
+    // 相手の発言の引用（「…」内の完了形）
+    expect(
+      detectCompletedIncident(
+        input("相手から「パスワードを入力してしまいましたか」と聞かれました"),
+      ),
+    ).toBe(false);
+    // 仮定（〜してしまったら）
+    expect(
+      detectCompletedIncident(input("カードを渡してしまったら返せないと脅されています")),
+    ).toBe(false);
+    // 規範・懸念（〜してしまっては／〜してしまっても）
+    expect(
+      detectCompletedIncident(input("口座番号を教えてしまってはいけないですよね")),
+    ).toBe(false);
+    expect(
+      detectCompletedIncident(input("身分証を送ってしまってもいいのでしょうか")),
+    ).toBe(false);
+    // 引用外の疑問形
+    expect(
+      detectCompletedIncident(input("パスワードを入力してしまいましたか。")),
+    ).toBe(false);
+    // 引用があっても、引用外に本人の完了報告があれば既遂
+    expect(
+      detectCompletedIncident(
+        input("「大丈夫ですか」と聞かれましたが、実はもう振り込みました。"),
+      ),
+    ).toBe(true);
+  });
 });

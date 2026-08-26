@@ -6,10 +6,18 @@ import type { ValidatedInput } from "./validate";
  * LLM呼び出しの前に必ず評価する第一防衛線。ここで拾えない表現はLLM側が判定する。
  */
 
+// 相手の発言・メッセージの引用（「…」『…』内）は相談者自身の完了報告ではないため、
+// 判定前にプレースホルダーへ置き換える
+// （例:「パスワードを入力してしまいましたか」と聞かれた → 未遂として通常トリアージへ）
+const QUOTED_RE = /「[^」]*」|『[^』]*』/g;
+
 // 「振り込んでしまいました」「渡してしまった」など完了+後悔の定型。
-// 「〜してしまいそう」(未遂)は除外する
+// 次は完了ではないため除外し、LLMトリアージ側の判定へ委ねる:
+// - 「〜してしまいそう」（未遂）
+// - 「〜してしまいましたか」（疑問）
+// - 「〜してしまったら／〜してしまっては／〜してしまっても」（仮定・規範）
 const COMPLETED_RE =
-  /(振り込ん|振込ん|送金し|渡し|払っ|支払っ|入金し|入力し|教え|伝え|送っ|提出し|登録し|インストールし|入れ)(て|で)しま(い(?!そう)|っ)/;
+  /(振り込ん|振込ん|送金し|渡し|払っ|支払っ|入金し|入力し|教え|伝え|送っ|提出し|登録し|インストールし|入れ)(て|で)しま(い(?!そう|ました(?:か|\?|？|よね))|っ(?!た(?:ら|なら)|て(?:は|も)))/;
 
 // 「すでに振り込みました」「もう払いました」など明示的な完了表現。
 // 直後が「か／よね／?」の場合は、相手の発言の引用（「もう振り込みましたか」と
@@ -31,7 +39,9 @@ export function detectCompletedIncident(input: ValidatedInput): boolean {
     t.normalize("NFKC"),
   );
   const joined = texts.join("\n");
-  if (COMPLETED_RE.test(joined) || EXPLICIT_DONE_RE.test(joined)) return true;
+  // 引用部を除いた、相談者自身の宣言部分だけで既遂を判定する
+  const declarative = joined.replace(QUOTED_RE, "《引用》");
+  if (COMPLETED_RE.test(declarative) || EXPLICIT_DONE_RE.test(declarative)) return true;
 
   const doneAnswer = input.answers.find((a) => a.questionId === "q_done");
   if (doneAnswer) {

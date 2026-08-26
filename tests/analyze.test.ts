@@ -103,6 +103,21 @@ describe("runAnalyze: 既遂の決定論ゲート", () => {
     expect(chatCalls).toHaveLength(0);
   });
 
+  it("引用内だけの既遂はゲートを通らないが、LLMトリアージの既遂判定で固定カードへ到達する", async () => {
+    const { deps, chatCalls } = makeDeps({
+      triage: JSON.stringify({ category: "incident", missing: [] }),
+    });
+    const res = await runAnalyze(
+      input("警察に「振り込んでしまいました」と説明しました"),
+      deps,
+    );
+    expect(res.status).toBe("incident");
+    // 決定論ゲートではなくトリアージ経由（LLMが1回呼ばれる）
+    expect(chatCalls.filter((c) => c.kind === "triage")).toHaveLength(1);
+    // トリアージへは引用を含む原文が渡る（ゲートの引用除去はプロンプトに影響しない）
+    expect(chatCalls[0].user).toContain("「振り込んでしまいました」");
+  });
+
   it("q_doneへの肯定回答は検索へ進まず固定カードへ分岐する", async () => {
     const { deps, chatCalls } = makeDeps();
     const res = await runAnalyze(

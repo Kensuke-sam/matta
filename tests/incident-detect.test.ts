@@ -118,4 +118,41 @@ describe("detectCompletedIncident", () => {
       ),
     ).toBe(true);
   });
+
+  it("疑問・仮定と紛らわしい完了表現は取りこぼさない", () => {
+    // 「〜ましたから」は理由の完了（疑問の「か」ではない）
+    expect(
+      detectCompletedIncident(input("振り込んでしまいましたから、もうお金は戻らないのでしょうか")),
+    ).toBe(true);
+    // 「〜たらしく」は伝聞の完了（仮定の「たら」ではない）
+    expect(
+      detectCompletedIncident(input("父が振り込んでしまったらしく、家族で困っています")),
+    ).toBe(true);
+    // 「〜てはじめて」は完了の叙述（規範の「ては」ではない）
+    expect(
+      detectCompletedIncident(input("振り込んでしまってはじめて詐欺と気づきました")),
+    ).toBe(true);
+    // 「〜てしまって、」の通常の完了報告
+    expect(
+      detectCompletedIncident(input("口座番号を教えてしまって、どうすればいいか分かりません")),
+    ).toBe(true);
+    // 「もう〜ましたから」も理由の完了
+    expect(
+      detectCompletedIncident(input("もう振り込みましたから、どうすればいいですか")),
+    ).toBe(true);
+    // 引用符なしの伝聞疑問は既遂にしない
+    expect(
+      detectCompletedIncident(
+        input("相手からパスワードを入力してしまいましたかと聞かれています"),
+      ),
+    ).toBe(false);
+  });
+
+  it("引用内だけの完了形はゲートでは拾わず、LLMトリアージへ渡す", () => {
+    // ゲート（決定論の第一防衛線）はfalseだが、入力文自体はそのままLLMトリアージへ
+    // 渡るため、後段で既遂と判定される経路は維持される（analyze側で検証）
+    expect(
+      detectCompletedIncident(input("警察に「振り込んでしまいました」と説明しました")),
+    ).toBe(false);
+  });
 });

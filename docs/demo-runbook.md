@@ -16,14 +16,25 @@
 
 ## 完走ゲート（条件1・2の自動判定）
 
+**主ゲート = UIゲート**（実ブラウザでPINログイン→入力→送信→5項目とTop 3根拠の描画完了まで検証。
+JS配信・hydration・描画の破損も検出する）:
+
+```bash
+cd matta && npm run gate:ui
+```
+
+高速サブチェック = APIゲート（API疎通と応答内容だけを検証。UIの破損は検出できない）:
+
 ```bash
 cd matta && npm run verify:deploy -- --url https://matta-gamma.vercel.app --gate
 ```
 
-- ニセ警察デモを3回連続実行し、各回 `complete`・根拠Top 3（police）・5項目非空・60秒以内を判定する
+- どちらもニセ警察デモを3回連続実行し、各回60秒以内・根拠Top 3・5項目を判定する
+  （APIゲートはTop 3すべてpoliceドメイン・重複なし・5項目の実質非空まで検査）
 - PINは `matta/.env.local` の `MATTA_VERIFY_PIN=<デモ用PIN>` 行から読む（1回書けばよい。ログへは出ない）
-- 全緑になるまで「アプリ安定化80%・発表20%」。**ゲートを通ってからスライドを磨く**
-- Vector導入後のフル検証は `--gate` なしで実行（言い換え・圏外・既遂・バックエンド検査を含む）
+- 対象URLの変更は `GATE_URL=<URL> npm run gate:ui`（localhost版の確認に使う）
+- 全緑になるまで「アプリ安定化80%・発表20%」。**UIゲートを通ってからスライドを磨く**
+- Vector導入後のフル検証は `verify:deploy` を `--gate` なしで実行（言い換え・圏外・既遂・バックエンド検査を含む）
 
 ## 発表前チェックリスト（T-30分）
 
@@ -31,41 +42,55 @@ cd matta && npm run verify:deploy -- --url https://matta-gamma.vercel.app --gate
 # 1. 本番の生存確認（PINなしで可能）
 curl -s https://matta-gamma.vercel.app/api/health
 
-# 2. 完走ゲート（3回連続）
-cd matta && npm run verify:deploy -- --url https://matta-gamma.vercel.app --gate
+# 2. 本番が「発表対象のコミット」であることを確認（旧デプロイでゲートを通さない）
+cd matta && vercel inspect https://matta-gamma.vercel.app 2>&1 | grep -i commit; git log --oneline -1
 
-# 3. localhost版を起動して1回完走させ、起動したまま温存（条件3）
-cd matta && npm run build && npm run start   # http://localhost:3000
-npm run verify:deploy -- --url http://localhost:3000 --gate --gate-runs 1
+# 3. UI完走ゲート（3回連続）
+npm run gate:ui
+
+# 4. localhost版（主キー）を起動して1回完走させ、起動したまま温存（条件3）
+npm run build && npm run start   # http://localhost:3000
+GATE_URL=http://localhost:3000 GATE_RUNS=1 npm run gate:ui
+
+# 5. バックアップキー版localhostを別ポートで事前起動して1回完走（条件5。
+#    発表中に.env.localを編集しないため、事前にもう1つ起動しておく）
+#    別ターミナルで: OPENAI_API_KEY=<バックアップキー> npm run start -- -p 3001
+GATE_URL=http://localhost:3001 GATE_RUNS=1 npm run gate:ui
 ```
 
 - [ ] スマホテザリングをONにして発表PCへ接続テスト（条件6）
 - [ ] 60秒録画ファイルを発表PCのデスクトップへ配置し、再生確認（条件8）
-- [ ] バックアップAPIキーの所在確認（条件5。下記「バックアップキー」参照）
 - [ ] 発表用ブラウザでPIN付き共有リンクを開き、相談フォーム直行を確認
+- [ ] バックアップキー版（:3001）の起動を確認（キー入力はターミナル履歴に残さないよう
+      パスワードマネージャーからコピーし、画面共有前にターミナルを閉じる）
 
 ## 障害時の切替（10秒ルール）
 
-**画面が10秒以上止まったら、原因調査をせず次の順で切り替える。**
+**「止まった」= エラー表示が出た、または画面が無反応・真っ白の状態。**
+処理中表示（送信後のローディング）が出ている間は正常動作なので**30秒まで待つ**
+（通常の応答は15〜25秒）。「止まった」状態が10秒続いたら、原因調査をせず次の順で切り替える。
 
 | 障害 | 症状 | 切替先 | 操作 |
 | --- | --- | --- | --- |
 | Vercel障害 | ページ自体が開かない・500 | localhost版 | ブラウザで `http://localhost:3000` を開く（起動済み） |
 | ネットワーク障害 | 全サイトが開かない | テザリング | スマホテザリングへ切替 → 本番URLを再読込。復帰しなければlocalhost版 |
-| OpenAI APIキー障害 | 「AIとの通信に失敗」等のエラー表示 | バックアップキー | localhost版の`.env.local`のOPENAI_API_KEYをバックアップキーへ差替 → `npm run start`再起動（約20秒） |
+| OpenAI APIキー障害 | 「AIとの通信に失敗」等のエラー表示 | バックアップキー版 | ブラウザで `http://localhost:3001` を開く（バックアップキーで事前起動済み。発表中に`.env.local`は編集しない） |
 | Upstash障害 | （自動切替のため操作不要） | ローカル意味検索 | 何もしない。審査用欄に「フォールバック」表示が出るだけで完走する |
 | すべて不通 | 何も動かない | 録画 | 60秒録画を再生。「実動デモの録画です」とだけ説明し、実動確認の代用とは言わない |
 
 - 切替担当を1人決めておく（発表者は話し続け、切替担当が無言で操作する）
-- localhost版は**本番と同じコミット**をビルドしておく（`git log --oneline -1`で照合）
+- localhost版2つ（:3000 主キー / :3001 バックアップキー）は**本番と同じコミット**を
+  ビルドしておく（T-30分チェックの`vercel inspect`＋`git log`で照合）
 
 ## バックアップAPIキー（条件5・手動準備）
 
 1. OpenAI Platformの予備Project（`MATTA Backup`）でBillingへ最小額をチャージし、
    **hard spend limitとspend alertを低額に設定**する
 2. 専用APIキーを発行し、パスワードマネージャーへ保存（リポジトリ・チャットへ貼らない）
-3. 事前にlocalhost版で1回だけ疎通確認する（本番Vercelのキーは差し替えない。
-   自動フェイルオーバーは誤課金につながるため行わず、手動切替のみ）
+3. T-30分チェックで、バックアップキーを使うlocalhost版を**:3001で事前起動**して
+   1回完走させ、起動したまま温存する（発表中の`.env.local`編集・再起動は行わない。
+   本番Vercelのキーも差し替えない。自動フェイルオーバーは誤課金につながるため
+   行わず、事前起動済みインスタンスへのブラウザ切替のみ）
 
 ## してはいけないこと
 

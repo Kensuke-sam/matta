@@ -6,6 +6,10 @@
  * オプション:
  *   --expect-backend upstash|local  検索バックエンドの期待値（既定: upstash）
  *   --skip-vector-count             healthのseed 12件チェックを省略（localバックエンド検証時）
+ *   --gate                          本番デモ完走ゲート: ニセ警察デモだけをN回連続実行し、
+ *                                   各回 complete・根拠Top 3（police）・5項目非空・60秒以内を判定する。
+ *                                   Vector導入前の旧デプロイにも使えるよう、バックエンド項目は検査しない
+ *   --gate-runs <N>                 ゲートの連続実行回数（既定: 3）
  *
  * 検証内容（実API・実Vector DBを使用）:
  *   1. /api/health: ok・OpenAI/PIN設定・コーパス12件・検索バックエンド・Vector DB接続とseed件数
@@ -16,9 +20,13 @@
  *   6. 既遂入力: incidentカードへ分岐
  *   7. 各ケース60秒以内
  *
- * PINはMATTA_VERIFY_PIN環境変数だけから読み、画面・ログへ出さない。
+ * PINは環境変数MATTA_VERIFY_PIN、無ければ`matta/.env.local`のMATTA_VERIFY_PIN行から読む。
+ * いずれも値は画面・ログへ出さない。
  * 送信する相談文はすべて架空の固定フィクスチャで、実在の連絡先・個人情報を含まない。
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { CHUNKS, CORPUS_VERSION } from "../lib/corpus.ts";
 import { DEMOS } from "../lib/demos.ts";
 import type { AnalyzeResponse, Domain, HealthResponse } from "../lib/types.ts";
@@ -66,14 +74,45 @@ const DEMO_DOMAINS: Record<string, Domain> = {
 
 const CHUNK_DOMAIN = new Map(CHUNKS.map((chunk) => [chunk.id, chunk.domain]));
 
+/**
+ * seedスクリプトと同じ方針で.env.localを読み込む（未設定の環境変数だけを補う）。
+ * PINを毎回シェルへ打たずに済ませるためで、値は画面・ログへ出さない。
+ */
+function loadEnvLocal(): void {
+  const path = join(dirname(fileURLToPath(import.meta.url)), "..", ".env.local");
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return; // .env.localが無ければ環境変数だけで動かす
+  }
+  for (const line of raw.split("\n")) {
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) continue;
+    const key = match[1];
+    let value = match[2].trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (!(key in process.env)) process.env[key] = value;
+  }
+}
+
 function parseArgs(argv: string[]): {
   url: string;
   expectBackend: "upstash" | "local";
   skipVectorCount: boolean;
+  gate: boolean;
+  gateRuns: number;
 } {
   let url = "";
   let expectBackend: "upstash" | "local" = "upstash";
   let skipVectorCount = false;
+  let gate = false;
+  let gateRuns = 3;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--url") url = argv[++i] ?? "";
     else if (argv[i] === "--expect-backend") {
@@ -83,6 +122,14 @@ function parseArgs(argv: string[]): {
       }
       expectBackend = raw;
     } else if (argv[i] === "--skip-vector-count") skipVectorCount = true;
+    else if (argv[i] === "--gate") gate = true;
+    else if (argv[i] === "--gate-runs") {
+      const raw = Number(argv[++i]);
+      if (!Number.isInteger(raw) || raw < 1 || raw > 10) {
+        fail("--gate-runs は1〜10の整数を指定してください。");
+      }
+      gateRuns = raw;
+    }
   }
   if (!url) {
     fail("--url https://<デプロイ先> を指定してください。");
@@ -92,7 +139,7 @@ function parseArgs(argv: string[]): {
   if (!url.startsWith("https://") && !isLocal) {
     fail("httpsのURLを指定してください（httpはlocalhostのみ許可）。");
   }
-  return { url: url.replace(/\/+$/, ""), expectBackend, skipVectorCount };
+  return { url: url.replace(/\/+$/, ""), expectBackend, skipVectorCount, gate, gateRuns };
 }
 
 function fail(message: string): never {
@@ -131,11 +178,125 @@ async function requestJson(
   return { status: res.status, body, headers: res.headers };
 }
 
+function printSummaryAndExit(): void {
+  console.log("");
+  if (failures > 0) {
+    console.error(`[verify] 失敗 ${failures} 件。上のNG行を確認してください。`);
+    process.exit(1);
+  }
+  console.log("[verify] すべて成功しました。");
+}
+
+async function loginAndGetCookie(url: string, pin: string): Promise<string> {
+  const session = await requestJson(`${url}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ pin }),
+  });
+  if (session.status !== 200) {
+    fail(`PINログインに失敗しました（status=${session.status}）。PINと対象URLを確認してください。`);
+  }
+  const cookie = (session.headers.get("set-cookie") ?? "").split(";")[0];
+  if (!cookie) {
+    fail("セッションCookieを取得できませんでした。");
+  }
+  return cookie;
+}
+
+/**
+ * 本番デモ完走ゲート（落単回避の完成条件1・2）。
+ * ニセ警察デモをruns回連続で実行し、各回 complete・根拠Top 3（police）・
+ * 5項目非空・60秒以内を判定する。Vector導入前の旧デプロイにも使えるよう、
+ * search_backend等のVector項目は検査しない。
+ */
+async function runDemoGate(url: string, pin: string, runs: number): Promise<void> {
+  console.log(`[verify] 本番デモ完走ゲート: ニセ警察デモを${runs}回連続実行します`);
+
+  const health = await requestJson(`${url}/api/health`, { method: "GET" });
+  check(health.status === 200, "healthが200を返す", `status=${health.status}`);
+  const h = health.body as HealthResponse;
+  check(
+    h?.ok === true && h?.openai_configured === true && h?.pin_configured === true,
+    "health（ok・OpenAI・PIN設定済み）",
+  );
+  check(
+    h?.chunk_count === CHUNKS.length,
+    `コーパス${CHUNKS.length}チャンク`,
+    `chunk_count=${h?.chunk_count}`,
+  );
+  if (h?.search_backend) {
+    console.log(`[verify] 検索バックエンド: ${h.search_backend}`);
+  }
+
+  const cookie = await loginAndGetCookie(url, pin);
+  const police = DEMOS.find((demo) => demo.id === "police");
+  if (!police) {
+    fail("ニセ警察デモの定義（lib/demos.ts id=police）が見つかりません。");
+  }
+
+  const times: string[] = [];
+  for (let run = 1; run <= runs; run++) {
+    const label = `完走 ${run}/${runs}`;
+    const startedAt = Date.now();
+    const res = await requestJson(`${url}/api/analyze`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ message: police.text }),
+    });
+    const elapsedMs = Date.now() - startedAt;
+    const elapsed = `${(elapsedMs / 1000).toFixed(1)}s`;
+    times.push(elapsed);
+    if (res.status !== 200) {
+      check(false, label, `status=${res.status} (${elapsed})`);
+      continue;
+    }
+    const body = res.body as AnalyzeResponse;
+    check(body.status === "complete", `${label}: complete`, `実際=${body.status} (${elapsed})`);
+    check(elapsedMs <= TIME_BUDGET_MS, `${label}: 60秒以内`, elapsed);
+    if (body.status === "complete") {
+      const r = body.result;
+      check(
+        r.evidence.length === 3,
+        `${label}: 根拠Top 3`,
+        r.evidence.map((e) => `${e.id}:${e.similarity.toFixed(3)}`).join(", "),
+      );
+      check(
+        CHUNK_DOMAIN.get(r.evidence[0]?.id ?? "") === "police",
+        `${label}: Top 1がpoliceドメイン`,
+        `Top 1=${r.evidence[0]?.id}`,
+      );
+      const lists = [
+        r.similar_cases,
+        r.danger_signs,
+        r.normal_response,
+        r.do_not,
+        r.safe_verification,
+      ];
+      check(
+        lists.every((list) => Array.isArray(list) && list.length > 0),
+        `${label}: 5項目すべて非空`,
+      );
+    }
+  }
+  console.log(`[verify] 所要時間: ${times.join(" / ")}`);
+}
+
 async function main(): Promise<void> {
-  const { url, expectBackend, skipVectorCount } = parseArgs(process.argv.slice(2));
+  loadEnvLocal();
+  const { url, expectBackend, skipVectorCount, gate, gateRuns } = parseArgs(
+    process.argv.slice(2),
+  );
   const pin = process.env.MATTA_VERIFY_PIN ?? "";
   if (!pin) {
-    fail("環境変数 MATTA_VERIFY_PIN にデモ用PINを設定してください（ログへは出しません）。");
+    fail(
+      "MATTA_VERIFY_PIN が未設定です（環境変数、または matta/.env.local へ設定してください。ログへは出しません）。",
+    );
+  }
+
+  if (gate) {
+    await runDemoGate(url, pin, gateRuns);
+    printSummaryAndExit();
+    return;
   }
 
   console.log(`[verify] 対象: ${url} / 期待バックエンド: ${expectBackend}`);
@@ -176,18 +337,7 @@ async function main(): Promise<void> {
   }
 
   // 2. PINログイン
-  const session = await requestJson(`${url}/api/session`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ pin }),
-  });
-  if (session.status !== 200) {
-    fail(`PINログインに失敗しました（status=${session.status}）。PINと対象URLを確認してください。`);
-  }
-  const cookie = (session.headers.get("set-cookie") ?? "").split(";")[0];
-  if (!cookie) {
-    fail("セッションCookieを取得できませんでした。");
-  }
+  const cookie = await loginAndGetCookie(url, pin);
 
   // 3〜6. 相談ケース
   const cases: VerifyCase[] = [
@@ -268,12 +418,7 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log("");
-  if (failures > 0) {
-    console.error(`[verify] 失敗 ${failures} 件。上のNG行を確認してください。`);
-    process.exit(1);
-  }
-  console.log("[verify] すべて成功しました。");
+  printSummaryAndExit();
 }
 
 try {

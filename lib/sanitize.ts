@@ -5,20 +5,32 @@
  * （プロンプト注入・幻覚のシグナルとみなす）。
  *
  * 割り切り: 年号・金額との誤検出を避けるため、単独の3桁数字（119等）は検査しない。
- * ハイフン付き・0始まり10〜11桁・#付き特番だけを対象にする。
+ * 0または+81始まりの電話番号らしき並びと、#付き特番だけを対象にする。
  */
 
-// 区切りはハイフン類・空白・括弧を許容し、+81の国際表記も対象にする
+// 電話番号らしさの判定は2段階:
+// 1) 候補抽出: 0・+81・「(0」で始まり、数字と区切り（ハイフン類・空白・括弧）が続く並び
+// 2) 桁数検証: 区切りを除いた数字が国内10〜11桁（+81系は12〜13桁）のときだけ電話番号と扱う
+// これにより (03)1234-5678 / 03-12345678 / +81 (0)3 1234 5678 等の一般表記を捕捉しつつ、
+// 年号・金額（2026年・5000円）や郵便番号・短い数字列を誤検出しない。
 // （NFKCで全角数字・全角括弧・全角空白は半角へ正規化済みの前提）
-const PHONE_LIKE_RE =
-  /(?:\+81[-‐－ー\s]?)?0?\d{1,4}[\s]?[(]\d{1,4}[)][\s]?\d{2,4}|(?:\+81[-‐－ー\s]?\d{1,4}|0\d{0,4})[-‐－ー\s]\d{1,4}[-‐－ー\s]\d{2,4}|(?<!\d)(?:\+81|0)\d{9,10}(?!\d)|#\d{3,5}/g;
+// 既知の限界: 空白区切りの電話番号2つが句読点なしで連続する文は1候補に融合し
+// 桁数検証で外れる（置換されない）。句読点・助詞があれば正しく分割される。
+const PHONE_CANDIDATE_RE = /(?<![\d#+])[(]?(?:\+81|0)[\d()\-‐－ー\s]{6,16}\d|#\d{3,5}/g;
+
+function isPhoneLike(candidate: string): boolean {
+  if (candidate.startsWith("#")) return true;
+  const digits = candidate.replace(/\D/g, "");
+  if (candidate.includes("+81")) return digits.length >= 12 && digits.length <= 13;
+  return digits.length >= 10 && digits.length <= 11;
+}
 
 const ALLOWED = new Set(["#9110"]);
 
 export function containsDisallowedContact(text: string): boolean {
   const normalized = text.normalize("NFKC");
-  for (const match of normalized.matchAll(PHONE_LIKE_RE)) {
-    if (!ALLOWED.has(match[0])) return true;
+  for (const match of normalized.matchAll(PHONE_CANDIDATE_RE)) {
+    if (isPhoneLike(match[0]) && !ALLOWED.has(match[0])) return true;
   }
   // 生成出力には連絡先を固定文言（SAFE_CONTACTS）以外で含めさせない:
   // URL・メールアドレスらしき文字列も注入・幻覚のシグナルとして拒否する。
@@ -52,6 +64,8 @@ export function redactContactInfo(text: string): string {
   let result = text.normalize("NFKC");
   result = result.replace(URL_RE, "[URL]");
   result = result.replace(EMAIL_RE, "[メールアドレス]");
-  result = result.replace(PHONE_LIKE_RE, (match) => (ALLOWED.has(match) ? match : "[電話番号]"));
+  result = result.replace(PHONE_CANDIDATE_RE, (match) =>
+    isPhoneLike(match) && !ALLOWED.has(match) ? "[電話番号]" : match,
+  );
   return result;
 }

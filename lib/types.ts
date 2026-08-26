@@ -49,6 +49,11 @@ export type CompleteResult = {
 export type SearchDebugInfo = {
   backend: SearchBackend;
   fallback: boolean;
+  /**
+   * 停止理由。below_threshold=最上位類似度が閾値未満 /
+   * model_unrelated=類似度は閾値以上だが生成モデルが資料と無関係と判定
+   */
+  stop_reason: "below_threshold" | "model_unrelated";
   /** Top 1の類似度。検索結果が空の場合はnull */
   top_similarity: number | null;
   /** 停止判定に使った閾値 */

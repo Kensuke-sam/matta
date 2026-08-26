@@ -10,7 +10,7 @@ import { isQuestionId, questionTextById, resolveQuestions } from "./questions";
 import { retrieve, TOP_K } from "./retrieval";
 import type { SearchOutcome } from "./retrieval";
 import { listsContainDisallowedContact, redactContactInfo } from "./sanitize";
-import type { AnalyzeResponse, QaPair } from "./types";
+import type { AnalyzeResponse, QaPair, SearchDebugInfo } from "./types";
 import { extractJson } from "./validate";
 import type { ValidatedInput } from "./validate";
 
@@ -84,7 +84,10 @@ async function callValidated<T>(
   throw new UpstreamError("invalid_output", "model output failed validation twice");
 }
 
-function insufficientResponse(search?: SearchOutcome): AnalyzeResponse {
+function insufficientResponse(
+  search: SearchOutcome | undefined,
+  stopReason: SearchDebugInfo["stop_reason"],
+): AnalyzeResponse {
   return {
     status: "insufficient_evidence",
     message: INSUFFICIENT_MESSAGE,
@@ -95,6 +98,7 @@ function insufficientResponse(search?: SearchOutcome): AnalyzeResponse {
           search: {
             backend: search.backend,
             fallback: search.fallback,
+            stop_reason: stopReason,
             top_similarity:
               search.results.length > 0
                 ? Math.round(search.results[0].similarity * 1000) / 1000
@@ -183,7 +187,7 @@ export async function runAnalyze(
   const search = await retrieve(buildQueryText(promptInput), deps.embedTexts, TOP_K, checkBudget);
   const retrieved = search.results;
   if (retrieved.length === 0 || retrieved[0].similarity < minSimilarity()) {
-    return insufficientResponse(search);
+    return insufficientResponse(search, "below_threshold");
   }
 
   // 3. 生成: 取得した根拠だけを使って5点出力を作る。
@@ -209,7 +213,8 @@ export async function runAnalyze(
     checkBudget,
   );
   if (generation.unrelated) {
-    return insufficientResponse(search);
+    // 類似度は閾値以上だったが、生成モデルが資料と相談内容が無関係と判定した停止
+    return insufficientResponse(search, "model_unrelated");
   }
   const g = generation.value;
 

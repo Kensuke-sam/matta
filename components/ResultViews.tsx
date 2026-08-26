@@ -259,15 +259,27 @@ export function InsufficientView({
                 </span>
               )}
             </p>
-            <p>
-              最上位の類似度:{" "}
-              <span className="font-display text-term-amber" data-testid="top-similarity">
-                {search.top_similarity === null ? "なし" : search.top_similarity.toFixed(3)}
-              </span>{" "}
-              ＜ 停止閾値{" "}
-              <span className="font-display text-term-fg">{search.threshold.toFixed(3)}</span>{" "}
-              のため、推測で回答せず停止しました
-            </p>
+            {search.stop_reason === "below_threshold" ? (
+              <p>
+                最上位の類似度:{" "}
+                <span className="font-display text-term-amber" data-testid="top-similarity">
+                  {search.top_similarity === null ? "なし" : search.top_similarity.toFixed(3)}
+                </span>{" "}
+                ＜ 停止閾値{" "}
+                <span className="font-display text-term-fg">{search.threshold.toFixed(3)}</span>{" "}
+                のため、推測で回答せず停止しました
+              </p>
+            ) : (
+              <p>
+                最上位の類似度は{" "}
+                <span className="font-display text-term-amber" data-testid="top-similarity">
+                  {search.top_similarity === null ? "なし" : search.top_similarity.toFixed(3)}
+                </span>{" "}
+                （閾値{" "}
+                <span className="font-display text-term-fg">{search.threshold.toFixed(3)}</span>{" "}
+                以上）でしたが、生成モデルが取得資料は相談内容と無関係と判定したため、推測で回答せず停止しました
+              </p>
+            )}
             <p>
               Embeddingモデル:{" "}
               <code className="bg-term-green/10 px-1 font-display text-term-green">

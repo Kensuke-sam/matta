@@ -231,6 +231,7 @@ describe("runAnalyze: 分岐", () => {
       expect(res.search).toMatchObject({
         backend: "local",
         fallback: false,
+        stop_reason: "below_threshold",
         threshold: 0.3,
       });
       expect(res.search?.top_similarity).not.toBeNull();
@@ -241,10 +242,15 @@ describe("runAnalyze: 分岐", () => {
     expect(chatCalls.filter((c) => c.kind === "generation")).toHaveLength(0);
   });
 
-  it("生成側がrelated:falseを返したら停止する", async () => {
+  it("生成側がrelated:falseを返したら、類似度が閾値以上でもmodel_unrelatedとして停止する", async () => {
     const { deps } = makeDeps({ generation: JSON.stringify({ related: false }) });
     const res = await runAnalyze(input("警察を名乗る電話が来ました"), deps);
     expect(res.status).toBe("insufficient_evidence");
+    if (res.status === "insufficient_evidence") {
+      // 「類似度＜閾値」という偽の停止理由を返さない
+      expect(res.search?.stop_reason).toBe("model_unrelated");
+      expect(res.search?.top_similarity ?? 0).toBeGreaterThanOrEqual(res.search?.threshold ?? 1);
+    }
   });
 
   it("閾値を上げると同じ入力でも停止する", async () => {

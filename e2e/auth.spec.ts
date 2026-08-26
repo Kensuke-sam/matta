@@ -63,6 +63,37 @@ test("ログイン状態はリロード後も維持され、ログアウトでPI
   await expect(page.getByRole("heading", { name: "デモ用PINの入力" })).toBeVisible();
 });
 
+test("共有リンク認証が通信障害で失敗するとPIN画面に案内が出て、手動ログイン成功で消える", async ({
+  page,
+}) => {
+  // 最初のPOST（共有リンクの自動ログイン）だけを通信障害にする
+  let aborted = false;
+  await page.route("**/api/session", (route) => {
+    if (route.request().method() === "POST" && !aborted) {
+      aborted = true;
+      return route.abort();
+    }
+    return route.fallback();
+  });
+  await page.goto(`/#pin=${E2E_PIN}`);
+
+  await expect(page.getByRole("heading", { name: "デモ用PINの入力" })).toBeVisible();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "共有リンクでのログインに失敗しました" }),
+  ).toBeVisible();
+
+  // 手動ログインが成功したら案内は消える
+  await page.getByLabel("PIN").fill(E2E_PIN);
+  await page.getByRole("button", { name: "はじめる" }).click();
+  await expect(
+    page.getByRole("heading", { name: "いま受けている連絡について教えてください" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("共有リンクでのログインに失敗しました", { exact: false }),
+  ).toBeHidden();
+  await page.unroute("**/api/session");
+});
+
 test("ログアウトに失敗したときはPINゲートへ遷移せずエラーを表示する", async ({ page }) => {
   await loginWithPin(page);
 

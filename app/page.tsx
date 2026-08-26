@@ -7,6 +7,7 @@ import QuestionForm from "@/components/QuestionForm";
 import { IncidentView, InsufficientView, ResultView } from "@/components/ResultViews";
 import { apiRequest, ApiError } from "@/lib/client-api";
 import { SAFE_CONTACTS } from "@/lib/guidance";
+import { parseSharedPin } from "@/lib/share-link";
 import type {
   AnalyzeResponse,
   AnswerInput,
@@ -25,6 +26,8 @@ export default function Home() {
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 共有リンク認証の失敗案内。PIN画面で表示し、手動ログイン成功でクリアする
+  const [linkNotice, setLinkNotice] = useState<string | null>(null);
   // 進行中の解析リクエストの世代。reset/logoutで進めて、古い応答を破棄する
   const requestSeq = useRef(0);
   // 共有リンクから読み取り済みで、まだログイン試行が完了していないPIN。
@@ -44,7 +47,7 @@ export default function Home() {
   // フラグメントはサーバーへ送信されず、履歴に残さないよう読み取り時に即座にURLから除去する
   const consumeLinkPin = useCallback((): string | null => {
     if (window.location.hash.length > 1) {
-      const pin = new URLSearchParams(window.location.hash.slice(1)).get("pin");
+      const pin = parseSharedPin(window.location.hash);
       if (pin !== null) {
         pendingLinkPin.current = pin;
         history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -64,14 +67,15 @@ export default function Home() {
         body: JSON.stringify({ pin: linkPin }),
       });
       pendingLinkPin.current = null;
+      setLinkNotice(null);
       // 試行中にログアウトが挟まった場合は、遅れて届いた成功でready化しない
       return seq === authSeq.current;
     } catch (err) {
       pendingLinkPin.current = null;
       // 無効PIN(401)は通常のPIN入力へ静かにフォールバックし、
-      // レート制限・通信障害などは原因が分かるようエラー表示する
+      // レート制限・通信障害などはPIN画面で原因が分かるよう案内する
       if (!(err instanceof ApiError && err.status === 401)) {
-        setError("共有リンクでのログインに失敗しました。PINを直接入力してください。");
+        setLinkNotice("共有リンクでのログインに失敗しました。PINを直接入力してください。");
       }
       return false;
     } finally {
@@ -208,7 +212,23 @@ export default function Home() {
         )}
 
         {authPhase === "pin" && (
-          <PinGate health={health} onAuthenticated={() => setAuthPhase("ready")} />
+          <>
+            {linkNotice && (
+              <p
+                role="alert"
+                className="border border-term-red/50 bg-term-red/10 px-4 py-3 text-base font-medium text-term-red"
+              >
+                {linkNotice}
+              </p>
+            )}
+            <PinGate
+              health={health}
+              onAuthenticated={() => {
+                setLinkNotice(null);
+                setAuthPhase("ready");
+              }}
+            />
+          </>
         )}
 
         {authPhase === "ready" && (

@@ -31,6 +31,9 @@ import { CHUNKS, CORPUS_VERSION } from "../lib/corpus.ts";
 import { DEMOS } from "../lib/demos.ts";
 import type { AnalyzeResponse, Domain, HealthResponse } from "../lib/types.ts";
 
+// 全HTTP往復（health・ログイン・analyze）はAbortSignal.timeout(65s)で必ず打ち切る。
+// 60秒SLAとの5秒差は意図的な余裕: 60秒超過は「NG判定+実測時間の報告」で扱い、
+// 65秒で接続自体を破棄する（ハングでゲートが止まらないための上限）
 const CASE_TIMEOUT_MS = 65_000;
 const TIME_BUDGET_MS = 60_000;
 
@@ -75,10 +78,12 @@ const DEMO_DOMAINS: Record<string, Domain> = {
 const CHUNK_DOMAIN = new Map(CHUNKS.map((chunk) => [chunk.id, chunk.domain]));
 
 /**
- * seedスクリプトと同じ方針で.env.localを読み込む（未設定の環境変数だけを補う）。
- * PINを毎回シェルへ打たずに済ませるためで、値は画面・ログへ出さない。
+ * .env.localからMATTA_VERIFY_PINだけを読み込む（環境変数が未設定の場合のみ）。
+ * このスクリプトに他の秘密値（OPENAI_API_KEY等）は不要なため、
+ * 検証プロセスへ展開しない。値は画面・ログへ出さない。
  */
-function loadEnvLocal(): void {
+function loadVerifyPinFromEnvLocal(): void {
+  if (process.env.MATTA_VERIFY_PIN) return;
   const path = join(dirname(fileURLToPath(import.meta.url)), "..", ".env.local");
   let raw: string;
   try {
@@ -87,17 +92,17 @@ function loadEnvLocal(): void {
     return; // .env.localが無ければ環境変数だけで動かす
   }
   for (const line of raw.split("\n")) {
-    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    const match = line.match(/^MATTA_VERIFY_PIN=(.*)$/);
     if (!match) continue;
-    const key = match[1];
-    let value = match[2].trim();
+    let value = match[1].trim();
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
     ) {
       value = value.slice(1, -1);
     }
-    if (!(key in process.env)) process.env[key] = value;
+    process.env.MATTA_VERIFY_PIN = value;
+    return;
   }
 }
 
@@ -255,15 +260,14 @@ async function runDemoGate(url: string, pin: string, runs: number): Promise<void
     check(elapsedMs <= TIME_BUDGET_MS, `${label}: 60秒以内`, elapsed);
     if (body.status === "complete") {
       const r = body.result;
+      const topIds = r.evidence.map((e) => `${e.id}:${e.similarity.toFixed(3)}`).join(", ");
+      check(r.evidence.length === 3, `${label}: 根拠Top 3`, topIds);
+      // Top 3すべてが期待ドメインで、重複がないこと（Top 1だけの判定にしない）
       check(
-        r.evidence.length === 3,
-        `${label}: 根拠Top 3`,
-        r.evidence.map((e) => `${e.id}:${e.similarity.toFixed(3)}`).join(", "),
-      );
-      check(
-        CHUNK_DOMAIN.get(r.evidence[0]?.id ?? "") === "police",
-        `${label}: Top 1がpoliceドメイン`,
-        `Top 1=${r.evidence[0]?.id}`,
+        r.evidence.every((e) => CHUNK_DOMAIN.get(e.id) === "police") &&
+          new Set(r.evidence.map((e) => e.id)).size === r.evidence.length,
+        `${label}: Top 3すべてpoliceドメイン・重複なし`,
+        topIds,
       );
       const lists = [
         r.similar_cases,
@@ -273,8 +277,13 @@ async function runDemoGate(url: string, pin: string, runs: number): Promise<void
         r.safe_verification,
       ];
       check(
-        lists.every((list) => Array.isArray(list) && list.length > 0),
-        `${label}: 5項目すべて非空`,
+        lists.every(
+          (list) =>
+            Array.isArray(list) &&
+            list.length > 0 &&
+            list.every((item) => typeof item === "string" && item.trim().length > 0),
+        ),
+        `${label}: 5項目すべて実質的に非空`,
       );
     }
   }
@@ -282,7 +291,7 @@ async function runDemoGate(url: string, pin: string, runs: number): Promise<void
 }
 
 async function main(): Promise<void> {
-  loadEnvLocal();
+  loadVerifyPinFromEnvLocal();
   const { url, expectBackend, skipVectorCount, gate, gateRuns } = parseArgs(
     process.argv.slice(2),
   );

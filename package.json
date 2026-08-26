@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:e2e": "next build && playwright test",
     "seed:vector": "node --experimental-transform-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/seed-vector-db.ts",
-    "verify:deploy": "node --experimental-transform-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/verify-deployment.ts"
+    "verify:deploy": "node --experimental-transform-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/verify-deployment.ts",
+    "gate:ui": "playwright test --config playwright.gate.config.ts"
   },
   "dependencies": {
     "next": "16.3.2",

@@ -5,7 +5,8 @@ import { expect, test } from "@playwright/test";
 /**
  * 本番デモUI完走ゲート（落単回避の完成条件1・2）。
  * 実デプロイ先に対して実ブラウザで、PINログイン→ニセ警察デモ入力→送信→
- * 5項目表示＋根拠Top 3の描画完了までをGATE_RUNS回連続で検証する。
+ * （追加質問が出た場合は回答して）5項目表示＋根拠Top 3の描画完了までを
+ * GATE_RUNS回連続で検証する。
  * APIゲート（verify:deploy --gate）と違い、JS配信・hydration・描画の破損も検出する。
  * 実OpenAI APIを消費するため、実行はデモリハーサル・発表前チェックに限る。
  */
@@ -67,10 +68,25 @@ for (let run = 1; run <= RUNS; run++) {
     const startedAt = Date.now();
     await page.getByRole("button", { name: "この内容で確認する" }).click();
 
+    // 実LLMトリアージは情報不足と判断すると追加質問（D-013: 固定文言・最大2問）を
+    // 1画面で返す。回答送信後は再質問しない（lib/analyze.ts: answersありでは質問を返さない）。
+    // 本番デモと同じ操作として、質問が出た場合は「まだ渡していない」旨を回答して先へ進む
+    const resultBanner = page.getByText("まずは、相手とのやり取りをいったん止めてください。");
+    const questionHeading = page.getByRole("heading", { name: "もう少しだけ教えてください" });
+    await expect(resultBanner.or(questionHeading).first()).toBeVisible({
+      timeout: TIME_BUDGET_MS,
+    });
+    if (!(await resultBanner.isVisible())) {
+      const answerBoxes = page.getByRole("textbox");
+      const boxCount = await answerBoxes.count();
+      for (let i = 0; i < boxCount; i++) {
+        await answerBoxes.nth(i).fill("まだ何も渡したり入力したりしていません。");
+      }
+      await page.getByRole("button", { name: "回答して確認する" }).click();
+    }
+
     // 完走判定: 中断バナー＋5項目見出し＋審査用インスペクタのTop 3根拠が描画されるまで
-    await expect(
-      page.getByText("まずは、相手とのやり取りをいったん止めてください。"),
-    ).toBeVisible({ timeout: TIME_BUDGET_MS });
+    await expect(resultBanner).toBeVisible({ timeout: TIME_BUDGET_MS });
     for (const heading of RESULT_HEADINGS) {
       await expect(page.getByRole("heading", { name: heading })).toBeVisible();
     }

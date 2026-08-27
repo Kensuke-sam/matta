@@ -103,7 +103,7 @@ export function PauseBanner() {
   return (
     <div className="corner-frame border-2 border-term-red/70 bg-term-red/10 p-4 shadow-[0_0_44px_rgba(255,107,107,0.14)] [--corner-color:rgba(255,107,107,0.85)] sm:p-5">
       <p aria-hidden className="term-label text-term-red/80">
-        !! Stop
+        Stop
       </p>
       <p className="neon-soft mt-1.5 text-base font-bold leading-relaxed text-term-red">
         まずは、相手とのやり取りをいったん止めてください。

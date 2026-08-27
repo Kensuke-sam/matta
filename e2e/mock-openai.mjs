@@ -1,12 +1,14 @@
 /**
  * E2E専用のOpenAI APIモックサーバー。
  * アプリ側はOPENAI_BASE_URLでここへ向く。実APIへは一切接続しない。
- * Embeddingはドメインキーワードで決定的なベクトルを返す。
+ * コーパスEmbeddingはcorpus-meta.mjsのindex対応ベクトル、
+ * クエリEmbeddingはドメインキーワードで決定的なベクトルを返す。
  */
 import { createServer } from "node:http";
+import { CORPUS_META, corpusVec } from "./corpus-meta.mjs";
 
 const PORT = Number(process.env.MOCK_OPENAI_PORT ?? 8965);
-const CORPUS_SIZE = 12;
+const CORPUS_SIZE = CORPUS_META.length;
 
 function baseVec(text) {
   if (/(闇バイト|副業|身分証|即日即金|高収入)/.test(text)) return [0, 0, 1];
@@ -16,10 +18,13 @@ function baseVec(text) {
 }
 
 function vecFor(text, index, isCorpus) {
+  // コーパスは本文のキーワードではなくindexのdomainで決める
+  // （チーム収集チャンクにはキーワードを含まない要約もあるため、
+  //   本文判定だと圏外ベクトルと衝突して閾値検証が壊れる）
+  if (isCorpus) return corpusVec(index);
   const base = baseVec(text);
   if (base === null) return [0, 0, 0, 1];
-  const noise = isCorpus ? 0.005 * (index + 1) : 0;
-  return [...base, noise];
+  return [...base, 0];
 }
 
 const INCIDENT_RE = /(振り込んで|渡して|払って|送って|入力して)しま/;

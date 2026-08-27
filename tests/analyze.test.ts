@@ -8,16 +8,27 @@ import { _resetCorpusCache } from "@/lib/retrieval";
 import { extractJson } from "@/lib/validate";
 import type { ValidatedInput } from "@/lib/validate";
 
+const DOMAIN_BASE: Record<string, number[]> = {
+  police: [1, 0, 0],
+  delivery: [0, 1, 0],
+  yamibaito: [0, 0, 1],
+};
+
 /**
- * ドメインキーワードで4次元ベクトルを割り当てる決定的fake Embedding。
+ * 決定的fake Embedding。コーパスはindexのdomainで（チーム収集チャンクには
+ * キーワードを含まない要約もあり、本文判定だと圏外ベクトルと衝突するため）、
+ * クエリはドメインキーワードで4次元ベクトルを割り当てる。
  * コーパス側だけに小さなノイズを足し、クエリとの完全一致（cos=1.0）を避けつつ
- * コーパス内の順位を一意にする。
+ * コーパス内の順位を一意にする。ノイズは合計0.2以下に抑え、
+ * 圏外クエリ[0,0,0,1]との類似度が停止閾値0.3を超えないようにする。
  */
 function domainVector(text: string, index: number, isCorpus: boolean): number[] {
-  const noise = isCorpus ? 0.005 * (index + 1) : 0;
-  if (/(闇バイト|副業|身分証|即日即金|高収入)/.test(text)) return [0, 0, 1, noise];
-  if (/(不在|宅配|フィッシング|偽サイト|SMS)/.test(text)) return [0, 1, 0, noise];
-  if (/(警察|逮捕|取り調べ)/.test(text)) return [1, 0, 0, noise];
+  if (isCorpus) {
+    return [...DOMAIN_BASE[CHUNKS[index].domain], (0.2 * (index + 1)) / CHUNKS.length];
+  }
+  if (/(闇バイト|副業|身分証|即日即金|高収入)/.test(text)) return [0, 0, 1, 0];
+  if (/(不在|宅配|フィッシング|偽サイト|SMS)/.test(text)) return [0, 1, 0, 0];
+  if (/(警察|逮捕|取り調べ)/.test(text)) return [1, 0, 0, 0];
   return [0, 0, 0, 1];
 }
 
@@ -269,7 +280,8 @@ describe("runAnalyze: 分岐", () => {
   });
 
   it("閾値を上げると同じ入力でも停止する", async () => {
-    process.env.MATTA_MIN_SIMILARITY = "0.999999";
+    // fakeのTop類似度（≈1-4.8e-7）と1の間に閾値を置く
+    process.env.MATTA_MIN_SIMILARITY = "0.9999999";
     const { deps } = makeDeps();
     const res = await runAnalyze(input("警察を名乗る電話が来ました"), deps);
     expect(res.status).toBe("insufficient_evidence");

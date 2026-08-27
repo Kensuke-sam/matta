@@ -1,38 +1,18 @@
 /**
  * E2E専用のUpstash Vector REST APIモックサーバー。
  * アプリ側はUPSTASH_VECTOR_REST_URLでここへ向く。実サービスへは一切接続しない。
- * コーパス12件には、mock-openai.mjsと同じ規約の決定的な4次元ベクトルを割り当て、
- * /query/{namespace} のコサイン類似検索を再現する。
+ * 全コーパスチャンクには、mock-openai.mjsと同じcorpus-meta.mjsの決定的な
+ * 4次元ベクトルを割り当て、/query/{namespace} のコサイン類似検索を再現する。
  * スコアはUpstash実装と同じ (1 + cosine) / 2 の正規化で返す。
  */
 import { createServer } from "node:http";
+import { CORPUS_META as CORPUS, corpusVec } from "./corpus-meta.mjs";
 
 const PORT = Number(process.env.MOCK_UPSTASH_PORT ?? 8966);
 // 実アプリのcorpus_versionと一致させる（playwright.config.tsがlib/corpus.tsから渡す）
 const NAMESPACE = process.env.MOCK_UPSTASH_NAMESPACE ?? "";
 // 実アプリのembeddingModel()既定値と一致させる（アプリ側metadata必須検証の対象）
 const EMBEDDING_MODEL = process.env.MOCK_UPSTASH_EMBEDDING_MODEL ?? "text-embedding-3-small";
-
-// lib/corpus.tsのチャンクID・domain・並び順と対応させる
-const CORPUS = [
-  ...["police-1", "police-2", "police-3", "police-4"].map((id) => ({ id, domain: "police" })),
-  ...["delivery-1", "delivery-2", "delivery-3", "delivery-4"].map((id) => ({
-    id,
-    domain: "delivery",
-  })),
-  ...["yami-1", "yami-2", "yami-3", "yami-4"].map((id) => ({ id, domain: "yamibaito" })),
-];
-
-const DOMAIN_BASE = {
-  police: [1, 0, 0],
-  delivery: [0, 1, 0],
-  yamibaito: [0, 0, 1],
-};
-
-// mock-openai.mjsがコーパスindexごとに付けるノイズと同じ値
-function corpusVec(index) {
-  return [...DOMAIN_BASE[CORPUS[index].domain], 0.005 * (index + 1)];
-}
 
 function cosine(a, b) {
   let dot = 0;

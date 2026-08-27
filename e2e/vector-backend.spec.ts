@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { CORPUS_VERSION } from "../lib/corpus";
+import { CHUNKS, CORPUS_VERSION } from "../lib/corpus";
 import { loginWithPin } from "./helpers";
 
 // 既定のbaseURL(3971)のアプリはUpstash Vectorモック(8966)へ接続している
 
-test("healthがUpstash接続とseed済み12件を報告する", async ({ request }) => {
+test("healthがUpstash接続とseed済み全件を報告する", async ({ request }) => {
   const res = await request.get("/api/health");
   expect(res.status()).toBe(200);
   const body = await res.json();
@@ -12,7 +12,7 @@ test("healthがUpstash接続とseed済み12件を報告する", async ({ request
   expect(body.vector_store).toEqual({
     configured: true,
     reachable: true,
-    namespace_vector_count: 12,
+    namespace_vector_count: CHUNKS.length,
   });
 });
 

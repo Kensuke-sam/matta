@@ -1,11 +1,14 @@
+import teamChunks from "./corpus-team.json";
 import type { Chunk } from "./types";
 
 /**
  * 公的資料コーパス。
  * 内容は原文の引用ではなく、確認日にライブ確認した公開情報の短い要約。
+ * BASE_CHUNKS（本ファイル直書きの基本12件）に、チーム収集資料から生成した
+ * corpus-team.json（再生成は npm run build:corpus。data/のJSONLが原本）を連結する。
  * 更新時は CORPUS_VERSION を上げる（Embeddingキャッシュの無効化に使う）。
  */
-export const CORPUS_VERSION = "2026-08-25.1";
+export const CORPUS_VERSION = "2026-08-27.1";
 
 /**
  * Embedding対象のテキスト表現。
@@ -15,7 +18,7 @@ export function chunkEmbeddingText(chunk: Chunk): string {
   return `${chunk.title}\n${chunk.content}`;
 }
 
-export const CHUNKS: Chunk[] = [
+const BASE_CHUNKS: Chunk[] = [
   // ---- 警察を名乗る詐欺（ニセ警察詐欺） ----
   {
     id: "police-1",
@@ -166,3 +169,6 @@ export const CHUNKS: Chunk[] = [
     },
   },
 ];
+
+// 生成物のdomainはビルドスクリプトがDomain値のみを書き込む（構造検証はtests/retrieval.test.ts）
+export const CHUNKS: Chunk[] = [...BASE_CHUNKS, ...(teamChunks as Chunk[])];

@@ -59,7 +59,7 @@ E2Eは外部APIを一切呼ばない（`OPENAI_BASE_URL` / `UPSTASH_VECTOR_REST_
 MATTA_VERIFY_PIN=<PIN> npm run verify:deploy -- --url https://<デプロイ先>
 ```
 
-health・PINログイン・3デモ・言い換え3件・圏外停止・既遂分岐・各60秒以内・根拠ドメイン一致・
+health・PINログイン・3デモ・言い換え3件（必要な場合は固定質問への回答を含む）・圏外停止・既遂分岐・各60秒以内・根拠ドメイン一致・
 バックエンド/フォールバック状態を自動チェックする（ローカル検索構成の検証は `--expect-backend local`）。
 
 ## Vector DB（Upstash Vector）

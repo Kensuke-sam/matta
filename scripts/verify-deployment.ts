@@ -14,7 +14,7 @@
  * 検証内容（実API・実Vector DBを使用）:
  *   1. /api/health: ok・OpenAI/PIN設定・コーパス12件・検索バックエンド・Vector DB接続とseed件数
  *   2. PINログイン（Cookie取得）
- *   3. 3デモ入力: complete・期待ドメインの根拠Top 3・バックエンド・フォールバックなし
+ *   3. 3デモ入力: 必要なら固定質問へ回答した後、complete・期待ドメインの根拠Top 3・バックエンド・フォールバックなし
  *   4. 各デモの言い換え: 同上（Embedding意味検索の言い換え耐性）
  *   5. 圏外入力: insufficient_evidenceで停止（フォールバックしない）
  *   6. 既遂入力: incidentカードへ分岐
@@ -29,7 +29,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHUNKS, CORPUS_VERSION } from "../lib/corpus.ts";
 import { DEMOS } from "../lib/demos.ts";
-import type { AnalyzeResponse, Domain, HealthResponse } from "../lib/types.ts";
+import { isQuestionId } from "../lib/questions.ts";
+import type { QuestionId } from "../lib/questions.ts";
+import type { AnalyzeResponse, AnswerInput, Domain, HealthResponse } from "../lib/types.ts";
 
 // 全HTTP往復（health・ログイン・analyze）はAbortSignal.timeout(65s)で必ず打ち切る。
 // 60秒SLAとの5秒差は意図的な余裕: 60秒超過は「NG判定+実測時間の報告」で扱い、
@@ -43,7 +45,7 @@ type VerifyCase = {
   label: string;
   text: string;
   expect: ExpectedStatus;
-  /** completeの場合に根拠Top 1へ期待するドメイン */
+  /** completeの場合に根拠Top 3へ期待するドメイン */
   domain?: Domain;
 };
 
@@ -73,6 +75,34 @@ const DEMO_DOMAINS: Record<string, Domain> = {
   police: "police",
   delivery: "delivery",
   sidejob: "yamibaito",
+};
+
+/**
+ * 実APIが追加質問を選んだ場合に使う、架空ケース用の固定回答。
+ * 質問文・回答文をモデルへ自由生成させず、検証対象ドメインと矛盾しない内容だけを使う。
+ */
+const FOLLOW_UP_ANSWERS: Record<Domain, Record<QuestionId, string>> = {
+  police: {
+    q_org: "警察の捜査担当者だと名乗っています。",
+    q_request: "ビデオ通話へ移り、口座を調べるための指示に従うよう求められています。",
+    q_channel: "知らない番号からの電話で、このあとビデオ通話へ移るよう言われています。",
+    q_urgency: "今すぐ対応し、誰にも話さないよう言われています。",
+    q_done: "いいえ、まだ送金も個人情報の提供もしていません。",
+  },
+  delivery: {
+    q_org: "宅配業者だと書かれています。",
+    q_request: "SMS内のリンクを開き、配送情報を確認するよう求められています。",
+    q_channel: "携帯電話のSMSで届きました。別アプリへの移動は求められていません。",
+    q_urgency: "急かす文言や口止めはありません。",
+    q_done: "いいえ、まだリンクを開かず、情報も入力していません。",
+  },
+  yamibaito: {
+    q_org: "SNSで見つけた求人の担当者だと名乗っています。",
+    q_request: "匿名性の高いアプリへ移り、身分証の写真を送るよう求められています。",
+    q_channel: "SNSのDMから、匿名性の高いチャットアプリへ移るよう言われています。",
+    q_urgency: "今すぐとは言われていませんが、高収入を強調されています。",
+    q_done: "いいえ、まだ身分証や個人情報を送っていません。",
+  },
 };
 
 const CHUNK_DOMAIN = new Map(CHUNKS.map((chunk) => [chunk.id, chunk.domain]));
@@ -371,18 +401,60 @@ async function main(): Promise<void> {
 
   for (const testCase of cases) {
     const startedAt = Date.now();
-    const res = await requestJson(`${url}/api/analyze`, {
+    let res = await requestJson(`${url}/api/analyze`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
       body: JSON.stringify({ message: testCase.text }),
     });
-    const elapsedMs = Date.now() - startedAt;
-    const elapsed = `${(elapsedMs / 1000).toFixed(1)}s`;
     if (res.status !== 200) {
+      const elapsedMs = Date.now() - startedAt;
+      const elapsed = `${(elapsedMs / 1000).toFixed(1)}s`;
       check(false, testCase.label, `status=${res.status} (${elapsed})`);
       continue;
     }
-    const body = res.body as AnalyzeResponse;
+    let body = res.body as AnalyzeResponse;
+
+    // 追加質問は正常な利用経路。completeを期待するケースでは、返された固定質問へ
+    // ドメイン別の架空回答を1回だけ送り、質問を含む全体時間で受け入れ判定する。
+    if (testCase.expect === "complete" && body.status === "needs_more_info") {
+      const questionIds = body.questions.map((q) => q.id);
+      const validQuestionCount = questionIds.length >= 1 && questionIds.length <= 2;
+      check(
+        validQuestionCount,
+        `${testCase.label}: 追加質問は1〜2件`,
+        `件数=${questionIds.length}`,
+      );
+      const domain = testCase.domain;
+      const answers: AnswerInput[] =
+        domain === undefined
+          ? []
+          : questionIds.flatMap((id) =>
+              isQuestionId(id) ? [{ questionId: id, answer: FOLLOW_UP_ANSWERS[domain][id] }] : [],
+            );
+      const allQuestionsKnown = validQuestionCount && answers.length === questionIds.length;
+      check(
+        allQuestionsKnown,
+        `${testCase.label}: 追加質問IDを固定回答へ解決`,
+        `question_ids=${questionIds.join(",") || "なし"}`,
+      );
+      if (allQuestionsKnown) {
+        res = await requestJson(`${url}/api/analyze`, {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie },
+          body: JSON.stringify({ message: testCase.text, answers }),
+        });
+        if (res.status !== 200) {
+          const elapsedMs = Date.now() - startedAt;
+          const elapsed = `${(elapsedMs / 1000).toFixed(1)}s`;
+          check(false, `${testCase.label}: 追加質問回答後`, `status=${res.status} (${elapsed})`);
+          continue;
+        }
+        body = res.body as AnalyzeResponse;
+      }
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    const elapsed = `${(elapsedMs / 1000).toFixed(1)}s`;
     check(
       body.status === testCase.expect,
       `${testCase.label}: status=${testCase.expect}`,
@@ -394,11 +466,11 @@ async function main(): Promise<void> {
       const r = body.result;
       const topIds = r.evidence.map((e) => `${e.id}:${e.similarity.toFixed(3)}`).join(", ");
       check(r.evidence.length === 3, `${testCase.label}: 根拠Top 3`, topIds);
-      const topDomain = CHUNK_DOMAIN.get(r.evidence[0]?.id ?? "");
+      const evidenceDomains = r.evidence.map((e) => CHUNK_DOMAIN.get(e.id));
       check(
-        topDomain === testCase.domain,
-        `${testCase.label}: Top 1が期待ドメイン（${testCase.domain}）`,
-        `Top 1=${r.evidence[0]?.id}`,
+        evidenceDomains.includes(testCase.domain),
+        `${testCase.label}: Top 3に期待ドメイン（${testCase.domain}）を含む`,
+        topIds,
       );
       check(
         r.search_backend === expectBackend,

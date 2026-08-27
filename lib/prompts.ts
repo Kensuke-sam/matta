@@ -37,6 +37,8 @@ export function triagePrompts(input: PromptInput): { system: string; user: strin
     '- それ以外はすべて "consultation"',
     "",
     'missing には、危険かどうかの判断に不可欠な情報が相談文に欠けている場合だけ、次の質問IDを最大2個入れてください。相談文から読み取れる項目は入れないでください。',
+    "詐欺や不審な連絡が関係することを相談文から読み取れる場合だけ、missing に質問IDを入れてください。",
+    "献立・天気・旅行など、詐欺や不審な連絡と明確に無関係な相談には追加質問をせず、missing は空配列にしてください。後段の意味検索が根拠不足として停止します。",
     questionList,
     alreadyAnswered
       ? "今回はすでに追加質問への回答を受け取っています。missing は必ず空配列にしてください。"

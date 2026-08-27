@@ -77,23 +77,57 @@ const server = createServer(async (req, res) => {
       .join("\n");
     let payload;
     if (system.includes("トリアージ")) {
-      payload = INCIDENT_RE.test(user)
-        ? { category: "incident", missing: [] }
-        : { category: "consultation", missing: [] };
+      const hasAnswers = user.includes("# 追加質問への回答");
+      if (INCIDENT_RE.test(user)) {
+        payload = { category: "incident", missing: [] };
+      } else if (!hasAnswers && user.includes("変な連絡が来て困っています")) {
+        // 質問フローE2E用: 初回だけ固定質問2問を要求する
+        payload = { category: "consultation", missing: ["q_org", "q_request"] };
+      } else {
+        payload = { category: "consultation", missing: [] };
+      }
     } else {
+      // ドメイン別の生成応答。固定質問文には全ドメインの例示語が含まれるため、
+      // 「- 質問:」行を除いた相談文・回答だけで判定する
+      const judgeText = user
+        .split("\n")
+        .filter((line) => !line.trimStart().startsWith("- 質問:"))
+        .join("\n");
+      const base = baseVec(judgeText);
+      const domainKey =
+        base === null ? "police" : base[2] === 1 ? "yami" : base[1] === 1 ? "delivery" : "police";
+      const byDomain = {
+        police: {
+          similar_cases: [
+            "警察官を名乗り口座やお金の確認を求める手口の事例が公的資料にあります",
+          ],
+          safe_verification: [
+            "いったん切って、警察相談専用電話#9110へ自分からかけて確認する",
+          ],
+        },
+        delivery: {
+          similar_cases: [
+            "宅配業者を装う不在通知の文面で偽サイトへ誘導する手口が報告されています",
+          ],
+          safe_verification: [
+            "メッセージのURLは開かず、公式アプリや公式サイトで荷物を確認する",
+          ],
+        },
+        yami: {
+          similar_cases: [
+            "高額報酬をうたい身分証を送らせる闇バイト募集の手口が公的資料にあります",
+          ],
+          safe_verification: ["応募をやめて、警察相談専用電話#9110へ相談する"],
+        },
+      };
       payload = {
         related: true,
-        similar_cases: [
-          "警察官などを名乗って口座やお金の確認を求める手口の事例が公的資料にあります",
-        ],
-        danger_signs: ["電話やビデオ通話でお金や口座の話が出ています"],
+        danger_signs: ["相手の要求どおりに操作するよう急かされています"],
         normal_response: [
-          "本物の警察がメッセージアプリで連絡したり手帳の画像を送ったりすることはありません",
+          "本物の機関や事業者が、この方法でお金や個人情報を求めることはありません",
         ],
-        do_not: ["言われた口座への振り込みやカードの引き渡し"],
-        safe_verification: [
-          "いったん切って、警察相談専用電話#9110へ自分からかけて確認する",
-        ],
+        do_not: ["相手に言われたままの振り込みや情報の送信"],
+        ...byDomain[domainKey],
       };
     }
     json(res, 200, {

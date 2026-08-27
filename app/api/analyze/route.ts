@@ -5,6 +5,9 @@ import { ANALYZE_RATE, clientIp, rateLimit } from "@/lib/ratelimit";
 import { isAuthenticated } from "@/lib/session";
 import { validateAnalyzeInput } from "@/lib/validate";
 
+// LLM呼び出しが複数回連なるため、Vercel Function側の上限を明示する
+export const maxDuration = 60;
+
 export async function POST(request: Request): Promise<Response> {
   if (!isAuthenticated(request)) {
     return errorResponse("unauthorized", "PINでログインしてください。", 401);

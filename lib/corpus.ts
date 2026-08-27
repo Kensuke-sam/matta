@@ -7,6 +7,14 @@ import type { Chunk } from "./types";
  */
 export const CORPUS_VERSION = "2026-08-25.1";
 
+/**
+ * Embedding対象のテキスト表現。
+ * 検索経路(lib/retrieval.ts)とseed(scripts/seed-vector-db.ts)で必ず同じ導出を使う。
+ */
+export function chunkEmbeddingText(chunk: Chunk): string {
+  return `${chunk.title}\n${chunk.content}`;
+}
+
 export const CHUNKS: Chunk[] = [
   // ---- 警察を名乗る詐欺（ニセ警察詐欺） ----
   {

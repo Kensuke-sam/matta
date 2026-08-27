@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { DEMOS } from "../lib/demos";
+import { QUESTION_BANK } from "../lib/questions";
 import { expectNoHorizontalScroll, loginWithPin } from "./helpers";
 
 const RESULT_HEADINGS = [
@@ -46,17 +47,61 @@ test("警察デモ: 5点出力と中断表示が出て、類似度は審査用�
   await expectNoHorizontalScroll(page);
 });
 
-test("配送フィッシングデモと副業デモも結果画面まで完走する", async ({ page }) => {
+test("配送フィッシングデモは配送系の根拠と文言で完走する", async ({ page }) => {
   await loginWithPin(page);
+  const demo = DEMOS.find((d) => d.id === "delivery")!;
+  await page.getByRole("button", { name: demo.label }).click();
+  await page.getByRole("button", { name: "この内容で確認する" }).click();
 
-  for (const demoId of ["delivery", "sidejob"] as const) {
-    const demo = DEMOS.find((d) => d.id === demoId)!;
-    await page.getByRole("button", { name: demo.label }).click();
-    await page.getByRole("button", { name: "この内容で確認する" }).click();
-    await expect(page.getByRole("heading", { name: "危険サイン" })).toBeVisible();
-    await page.getByRole("button", { name: "新しい相談をはじめる" }).click();
-    await expect(page.getByLabel("相談内容")).toHaveValue("");
-  }
+  await expect(page.getByRole("heading", { name: "危険サイン" })).toBeVisible();
+  await expect(
+    page.getByText("偽サイトへ誘導する手口が報告されています"),
+  ).toBeVisible();
+
+  const inspector = page.getByTestId("inspector");
+  await inspector.locator("summary").click();
+  await expect(inspector.getByText("スミッシング")).toBeVisible();
+
+  await page.getByRole("button", { name: "新しい相談をはじめる" }).click();
+  await expect(page.getByLabel("相談内容")).toHaveValue("");
+});
+
+test("副業デモは闇バイト系の根拠と文言で完走する", async ({ page }) => {
+  await loginWithPin(page);
+  const demo = DEMOS.find((d) => d.id === "sidejob")!;
+  await page.getByRole("button", { name: demo.label }).click();
+  await page.getByRole("button", { name: "この内容で確認する" }).click();
+
+  await expect(page.getByRole("heading", { name: "危険サイン" })).toBeVisible();
+  await expect(
+    page.getByText("身分証を送らせる闇バイト募集の手口が公的資料にあります"),
+  ).toBeVisible();
+
+  const inspector = page.getByTestId("inspector");
+  await inspector.locator("summary").click();
+  await expect(
+    inspector.getByText("闇バイト（犯罪実行者募集）の募集の特徴"),
+  ).toBeVisible();
+});
+
+test("情報不足の相談では固定文言の追加質問を経て結果に到達する", async ({ page }) => {
+  await loginWithPin(page);
+  await page
+    .getByLabel("相談内容")
+    .fill("変な連絡が来て困っています。どうすればいいですか。");
+  await page.getByRole("button", { name: "この内容で確認する" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "もう少しだけ教えてください" }),
+  ).toBeVisible();
+  await page.getByLabel(QUESTION_BANK.q_org).fill("警察を名乗る人からの電話です");
+  await page.getByLabel(QUESTION_BANK.q_request).fill("口座を調べると言われています");
+  await page.getByRole("button", { name: "回答して確認する" }).click();
+
+  await expect(page.getByRole("heading", { name: "危険サイン" })).toBeVisible();
+  await expect(
+    page.getByText("警察官を名乗り口座やお金の確認を求める手口の事例が公的資料にあります"),
+  ).toBeVisible();
 });
 
 test("圏外入力では判定せず、根拠不足の案内で停止する", async ({ page }) => {

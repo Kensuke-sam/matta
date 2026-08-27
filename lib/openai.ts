@@ -6,7 +6,9 @@
 
 const DEFAULT_CHAT_MODEL = "gpt-5.6-luna";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
-const TIMEOUT_MS = 45_000;
+// 1リクエストで最大3回のLLM/Embedding呼び出し（+各1リトライ）があるため、
+// Vercel Functionの上限（analyze routeのmaxDuration=60s）に収まるよう短めにする
+const TIMEOUT_MS = 30_000;
 
 export type UpstreamErrorCode =
   | "openai_not_configured"
@@ -84,19 +86,43 @@ export const embedTexts: EmbedFn = async (texts) => {
   const json = (await post("/embeddings", {
     model: embeddingModel(),
     input: texts,
-  })) as { data?: { index?: number; embedding?: unknown }[] };
+  })) as { data?: { index?: unknown; embedding?: unknown }[] };
   const data = json?.data;
   if (!Array.isArray(data) || data.length !== texts.length) {
     throw new UpstreamError("upstream_error", "unexpected embeddings response shape");
   }
-  return [...data]
-    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-    .map((d) => {
-      if (!Array.isArray(d.embedding) || d.embedding.some((v) => typeof v !== "number")) {
-        throw new UpstreamError("upstream_error", "unexpected embeddings response shape");
-      }
-      return d.embedding as number[];
-    });
+  const vectors: number[][] = new Array(texts.length);
+  const seen = new Set<number>();
+  for (const item of data) {
+    if (item === null || typeof item !== "object") {
+      throw new UpstreamError("upstream_error", "unexpected embeddings item");
+    }
+    const index = item.index;
+    if (
+      typeof index !== "number" ||
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= texts.length ||
+      seen.has(index)
+    ) {
+      throw new UpstreamError("upstream_error", "unexpected embeddings index");
+    }
+    seen.add(index);
+    const embedding = item.embedding;
+    if (
+      !Array.isArray(embedding) ||
+      embedding.length === 0 ||
+      embedding.some((v) => typeof v !== "number" || !Number.isFinite(v))
+    ) {
+      throw new UpstreamError("upstream_error", "unexpected embeddings vector");
+    }
+    vectors[index] = embedding as number[];
+  }
+  const dimension = vectors[0].length;
+  if (vectors.some((v) => v.length !== dimension)) {
+    throw new UpstreamError("upstream_error", "inconsistent embedding dimensions");
+  }
+  return vectors;
 };
 
 export type ChatJsonArgs = { system: string; user: string };

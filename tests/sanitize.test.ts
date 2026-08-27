@@ -1,0 +1,171 @@
+import { describe, expect, it } from "vitest";
+import {
+  containsDisallowedContact,
+  listsContainDisallowedContact,
+  redactContactInfo,
+} from "@/lib/sanitize";
+
+describe("containsDisallowedContact", () => {
+  it("公式窓口の番号は許可する", () => {
+    expect(containsDisallowedContact("警察相談専用電話#9110へかける")).toBe(false);
+    expect(containsDisallowedContact("消費者ホットライン188へ相談する")).toBe(false);
+    expect(containsDisallowedContact("緊急のときは110番へ電話する")).toBe(false);
+  });
+
+  it("許可外の電話番号形式を検出する", () => {
+    expect(containsDisallowedContact("0120-123-456へ電話してください")).toBe(true);
+    expect(containsDisallowedContact("03-1234-5678までご連絡ください")).toBe(true);
+    expect(containsDisallowedContact("09012345678に電話")).toBe(true);
+    expect(containsDisallowedContact("#1234へダイヤル")).toBe(true);
+    // 空白・括弧・国際表記の区切りも検出する
+    expect(containsDisallowedContact("090 1234 5678へ電話")).toBe(true);
+    expect(containsDisallowedContact("03(1234)5678までご連絡ください")).toBe(true);
+    expect(containsDisallowedContact("+81-90-1234-5678へ折り返し")).toBe(true);
+    expect(containsDisallowedContact("+819012345678に電話")).toBe(true);
+    // 括弧先頭・第2区切りなし・国際+括弧の一般表記も検出する
+    expect(containsDisallowedContact("(03)1234-5678へ電話してください")).toBe(true);
+    expect(containsDisallowedContact("03-12345678までご連絡ください")).toBe(true);
+    expect(containsDisallowedContact("+81 (0)3 1234 5678へ折り返し")).toBe(true);
+    // +81の固定電話（国内部分9桁）も検出する
+    expect(containsDisallowedContact("+81-3-1234-5678へ連絡")).toBe(true);
+    // +81以外の国番号付き番号・ピリオド区切りの国内番号も検出する
+    expect(containsDisallowedContact("+1 212 555 0123へ電話してください")).toBe(true);
+    expect(containsDisallowedContact("03.1234.5678までご連絡ください")).toBe(true);
+    // 電話番号+確認コード等が融合した並びも、先頭の電話番号部分で検出する
+    expect(containsDisallowedContact("090-1234-5678 123456 を入力してください")).toBe(true);
+  });
+
+  it("URL・メールアドレスも許可外連絡先として検出する", () => {
+    expect(containsDisallowedContact("詳しくは https://example.com/x を確認")).toBe(true);
+    expect(containsDisallowedContact("soudan@example.jp へ連絡してください")).toBe(true);
+    expect(containsDisallowedContact("公式アプリから荷物を確認する")).toBe(false);
+    // /gフラグのlastIndex残留で判定が交互に狂わないこと
+    expect(containsDisallowedContact("https://example.com/x を確認")).toBe(true);
+    expect(containsDisallowedContact("https://example.com/x を確認")).toBe(true);
+  });
+
+  it("全角数字・全角区切りも正規化して検出する", () => {
+    expect(containsDisallowedContact("０１２０－１１１－２２２へ")).toBe(true);
+    expect(containsDisallowedContact("０３ー１２３４ー５６７８")).toBe(true);
+  });
+
+  it("年号・金額・郵便番号を誤検出しない", () => {
+    expect(containsDisallowedContact("2026年に公表された事例です")).toBe(false);
+    expect(containsDisallowedContact("5000円を請求された事例があります")).toBe(false);
+    expect(containsDisallowedContact("5万円の振り込みを求められた")).toBe(false);
+    // ピリオドを区切りへ追加しても小数・郵便番号（0始まり7桁）を誤検出しない
+    expect(containsDisallowedContact("手数料は0.5%だと言われた")).toBe(false);
+    expect(containsDisallowedContact("〒060-0001宛に送れと言われた")).toBe(false);
+  });
+
+  it("配列群のどこかに許可外番号があれば検出する", () => {
+    expect(
+      listsContainDisallowedContact([
+        ["#9110へ相談する"],
+        ["188へ相談する", "0120-999-888へ電話する"],
+      ]),
+    ).toBe(true);
+    expect(
+      listsContainDisallowedContact([["#9110へ相談する"], ["188へ相談する"]]),
+    ).toBe(false);
+  });
+});
+
+describe("redactContactInfo", () => {
+  it("電話番号を置換し、公式窓口の#9110は残す", () => {
+    expect(redactContactInfo("0120-123-456へ電話しろと言われた")).toBe(
+      "[電話番号]へ電話しろと言われた",
+    );
+    expect(redactContactInfo("09012345678から着信があった")).toBe("[電話番号]から着信があった");
+    expect(redactContactInfo("#9110へ相談するつもりです")).toBe("#9110へ相談するつもりです");
+    expect(redactContactInfo("#1234へダイヤルしろと言われた")).toBe(
+      "[電話番号]へダイヤルしろと言われた",
+    );
+  });
+
+  it("全角の電話番号も正規化して置換する", () => {
+    expect(redactContactInfo("０１２０－１１１－２２２へかけてしまいそう")).toBe(
+      "[電話番号]へかけてしまいそう",
+    );
+  });
+
+  it("空白・括弧・国際表記の電話番号も置換する", () => {
+    expect(redactContactInfo("090 1234 5678から着信")).toBe("[電話番号]から着信");
+    expect(redactContactInfo("03(1234)5678へ折り返せと言われた")).toBe(
+      "[電話番号]へ折り返せと言われた",
+    );
+    expect(redactContactInfo("+81-90-1234-5678に電話しろと言われた")).toBe(
+      "[電話番号]に電話しろと言われた",
+    );
+    // 括弧先頭・第2区切りなし・国際+括弧の一般表記も置換する
+    expect(redactContactInfo("(03)1234-5678へ電話しろと言われた")).toBe(
+      "[電話番号]へ電話しろと言われた",
+    );
+    expect(redactContactInfo("03-12345678へ折り返しを求められた")).toBe(
+      "[電話番号]へ折り返しを求められた",
+    );
+    expect(redactContactInfo("+81 (0)3 1234 5678に電話しろと言われた")).toBe(
+      "[電話番号]に電話しろと言われた",
+    );
+    // +81の固定電話（国内部分9桁）も置換する
+    expect(redactContactInfo("+81-3-1234-5678へ連絡しろと言われた")).toBe(
+      "[電話番号]へ連絡しろと言われた",
+    );
+    // +81以外の国番号付き番号・ピリオド区切りの国内番号も置換する
+    expect(redactContactInfo("+1 212 555 0123に電話しろと言われた")).toBe(
+      "[電話番号]に電話しろと言われた",
+    );
+    expect(redactContactInfo("03.1234.5678へ折り返せと言われた")).toBe(
+      "[電話番号]へ折り返せと言われた",
+    );
+  });
+
+  it("電話番号と確認コード等が融合した並びは、電話番号部分だけを置換する", () => {
+    expect(redactContactInfo("090-1234-5678 123456 を入力しろと言われた")).toBe(
+      "[電話番号] 123456 を入力しろと言われた",
+    );
+    // 改行区切りで別の数値が続く場合も電話番号部分は置換される
+    expect(redactContactInfo("連絡先は090-1234-5678\n1234 と言われた")).toBe(
+      "連絡先は[電話番号]\n1234 と言われた",
+    );
+  });
+
+  it("パス付きの裸ドメインは置換し、パスなしの事業者ドメイン言及は残す", () => {
+    expect(redactContactInfo("example-delivery.jp/aB3 を開けと言われた")).toBe(
+      "[URL] を開けと言われた",
+    );
+    expect(redactContactInfo("amazon.co.jpからのメールだと名乗っています")).toBe(
+      "amazon.co.jpからのメールだと名乗っています",
+    );
+  });
+
+  it("URLを置換し、直後の日本語文は巻き込まない", () => {
+    expect(redactContactInfo("https://example.com/track?id=123を開けと言われた")).toBe(
+      "[URL]を開けと言われた",
+    );
+    expect(redactContactInfo("www.example-delivery.jp/aB3 へ誘導された")).toBe(
+      "[URL] へ誘導された",
+    );
+  });
+
+  it("メールアドレスを置換する", () => {
+    expect(redactContactInfo("test.user+tag@example.co.jpから届いた")).toBe(
+      "[メールアドレス]から届いた",
+    );
+  });
+
+  it("連絡先を含まない相談文は意味を変えない", () => {
+    expect(redactContactInfo("警察を名乗る電話で口座を調べると言われた")).toBe(
+      "警察を名乗る電話で口座を調べると言われた",
+    );
+  });
+
+  it("複数種類が混在してもすべて置換する", () => {
+    const text =
+      "03-1234-5678から電話があり、https://evil.example/xを開いてscam@example.comへ返信しろと言われた";
+    const redacted = redactContactInfo(text);
+    expect(redacted).toBe(
+      "[電話番号]から電話があり、[URL]を開いて[メールアドレス]へ返信しろと言われた",
+    );
+  });
+});

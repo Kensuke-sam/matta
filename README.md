@@ -94,6 +94,134 @@ vercel env add OPENAI_API_KEY production
 vercel env add MATTA_DEMO_PIN production
 ```
 
+## Cloud9でのプレビュー（standalone成果物）
+
+Cloud9のルートボリューム上では依存パッケージのインストールやビルドを行わず、GitHub ActionsがLinux環境で作成したstandalone成果物だけを配置する。
+この手順には既存のAWS Cloud9環境が必要になる。AWS Cloud9は新規顧客への提供を終了しているため、新しいAWSアカウントでは環境を作成できない。
+Cloud9側にはNode.js 20.9.0以上が必要になる。
+
+### 1. GitHub Actionsから成果物を取得する
+
+1. GitHubでこのリポジトリの **Actions** を開く
+2. **CI** ワークフローの成功した実行を開く。成果物がない場合は、**Run workflow** から`main`のCIを実行する
+3. 画面下部の **Artifacts** から `matta-standalone-linux-x64` をダウンロードする
+4. ダウンロードしたZIPを手元のPCで展開し、`matta-standalone-linux-x64.tar.gz`を取り出す
+
+成果物の保存期間はCI実行後7日間。
+成果物には`.env.local`やAPIキーなどの秘密値を含めていない。
+
+### 2. Cloud9へ配置する
+
+Cloud9 IDEで`matta-standalone-linux-x64.tar.gz`を`~/environment`へアップロードする。
+展開前に、ディスク容量とinodeに余裕があることを確認する。
+
+```bash
+df -h /
+df -i /
+```
+
+初回は実行用ディレクトリを作り、成果物を展開する。
+
+```bash
+mkdir -p ~/environment/matta-runtime
+tar -xzf ~/environment/matta-standalone-linux-x64.tar.gz \
+  -C ~/environment/matta-runtime
+rm ~/environment/matta-standalone-linux-x64.tar.gz
+```
+
+`server.js`が配置されたことを確認する。
+
+```bash
+ls ~/environment/matta-runtime/server.js
+```
+
+### 3. 環境変数を設定する
+
+実行用ディレクトリに`.env.local`を作成する。
+
+```bash
+nano ~/environment/matta-runtime/.env.local
+chmod 600 ~/environment/matta-runtime/.env.local
+```
+
+Upstash Vectorを使わないCloud9プレビューでは、最低限次の3変数を設定する。
+ローカル意味検索でもEmbeddingと回答生成にOpenAI APIを使うため、`OPENAI_API_KEY`は必要になる。
+
+```dotenv
+OPENAI_API_KEY=<OpenAI APIキー>
+MATTA_DEMO_PIN=<8文字以上のPIN>
+MATTA_SEARCH_BACKEND=local
+```
+
+秘密値はGitHub、README、チャット、シェルのコマンド履歴へ書かない。
+
+### 4. サーバーを起動する
+
+Node.jsのバージョンを確認する。
+
+```bash
+node -v
+```
+
+20.9.0未満の場合は、Cloud9に入っているnvmでNode.js 20へ切り替える。
+
+```bash
+nvm install 20
+nvm use 20
+nvm alias default 20
+```
+
+Cloud9の内蔵プレビューが対応するポート8080でstandaloneサーバーを起動する。
+Cloud9上で`npm ci`や`npm run build`を実行する必要はない。
+
+```bash
+cd ~/environment/matta-runtime
+PORT=8080 HOSTNAME=0.0.0.0 node server.js
+```
+
+別のターミナルからhealthを確認する。
+
+```bash
+curl -sS http://127.0.0.1:8080/api/health | python3 -m json.tool
+```
+
+`openai_configured`と`pin_configured`が`true`、`search_backend`が`local`なら起動準備は完了している。
+環境変数を修正した場合は、`Ctrl+C`でサーバーを停止してから起動し直す。
+
+### 5. Cloud9で表示する
+
+1. Cloud9 IDEの **Preview** から **Preview Running Application** を選ぶ
+2. 埋め込みプレビュー右上の「新しいブラウザータブで開く」ボタンを押す
+3. 新しいタブのCloud9プレビューURLでPINを入力する
+
+埋め込みプレビューはiframe内で動くため、ブラウザーが認証Cookieを次のAPIリクエストへ送らず、相談送信時にPIN画面へ戻る場合がある。
+PIN入力から相談実行まで、新しいブラウザータブで操作する。
+`localhost:8080`ではなく、Cloud9が発行する次の形式のURLを使う。
+
+```text
+https://<環境ID>.vfs.cloud9.<リージョン>.amazonaws.com/
+```
+
+このURLはCloud9 IDEを開いている同じブラウザーでの確認用であり、チームへの共有URLには使わない。
+確認を終了するときは、サーバーを起動したターミナルで`Ctrl+C`を押す。
+
+### 成果物を更新する
+
+新しい成果物へ入れ替えるときは、現在の`.env.local`を一時退避してから実行用ディレクトリを置き換える。
+
+```bash
+mv ~/environment/matta-runtime/.env.local ~/environment/matta-runtime.env.local
+rm -rf ~/environment/matta-runtime
+mkdir -p ~/environment/matta-runtime
+tar -xzf ~/environment/matta-standalone-linux-x64.tar.gz \
+  -C ~/environment/matta-runtime
+mv ~/environment/matta-runtime.env.local ~/environment/matta-runtime/.env.local
+chmod 600 ~/environment/matta-runtime/.env.local
+rm ~/environment/matta-standalone-linux-x64.tar.gz
+```
+
+AWS公式資料: [AWS Cloud9 IDEで実行中のアプリケーションをプレビューする](https://docs.aws.amazon.com/cloud9/latest/user-guide/app-preview.html)
+
 ## 安全設計
 
 - APIキー・PINはサーバー環境変数のみ。ブラウザへ渡さない

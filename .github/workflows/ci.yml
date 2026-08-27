@@ -46,3 +46,18 @@ jobs:
 
       - name: Build and end-to-end tests
         run: npm run test:e2e
+
+      - name: Package standalone build
+        run: |
+          mkdir -p .next/standalone/.next
+          cp -r .next/static .next/standalone/.next/static
+          if [ -d public ]; then cp -r public .next/standalone/public; fi
+          tar -czf matta-standalone-linux-x64.tar.gz -C .next/standalone .
+
+      - name: Upload standalone artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: matta-standalone-linux-x64
+          path: matta-standalone-linux-x64.tar.gz
+          retention-days: 7
+          if-no-files-found: error

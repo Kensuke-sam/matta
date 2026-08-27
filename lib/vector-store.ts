@@ -151,10 +151,14 @@ export type VectorStoreHealth = {
 
 const HEALTH_CACHE_TTL_MS = 10_000;
 let healthCache: { at: number; namespace: string; health: VectorStoreHealth } | null = null;
+let healthProbeInFlight: { namespace: string; promise: Promise<VectorStoreHealth> } | null = null;
 
 /**
  * healthエンドポイント用の接続確認。
- * 未認証で連打されても外部I/Oが際限なく増えないよう、結果を短時間キャッシュする。
+ * 未認証で連打されても外部I/Oが際限なく増えないよう、結果を短時間キャッシュし、
+ * キャッシュ未設定時の同時呼び出しは進行中Promiseを共有して外部fetch 1回へ集約する
+ * （single-flight。キャッシュはfetch完了後にしか入らないため、これがないと
+ * 同時N件がそのままN件の認証付き/info発行になる）。
  */
 export async function probeVectorStoreHealth(namespace: string): Promise<VectorStoreHealth> {
   const now = Date.now();
@@ -165,22 +169,35 @@ export async function probeVectorStoreHealth(namespace: string): Promise<VectorS
   ) {
     return healthCache.health;
   }
-  let health: VectorStoreHealth;
-  try {
-    const info = await fetchIndexInfo();
-    health = {
-      reachable: true,
-      namespaceVectorCount: info.namespaces[namespace]?.vectorCount ?? 0,
-    };
-  } catch {
-    health = { reachable: false, namespaceVectorCount: null };
+  if (healthProbeInFlight && healthProbeInFlight.namespace === namespace) {
+    return healthProbeInFlight.promise;
   }
-  healthCache = { at: now, namespace, health };
-  return health;
+  // 内側でcatchするためこのPromiseはrejectしない（共有先へ失敗を伝播させない）
+  const promise = (async () => {
+    let health: VectorStoreHealth;
+    try {
+      const info = await fetchIndexInfo();
+      health = {
+        reachable: true,
+        namespaceVectorCount: info.namespaces[namespace]?.vectorCount ?? 0,
+      };
+    } catch {
+      health = { reachable: false, namespaceVectorCount: null };
+    }
+    healthCache = { at: Date.now(), namespace, health };
+    return health;
+  })();
+  healthProbeInFlight = { namespace, promise };
+  try {
+    return await promise;
+  } finally {
+    if (healthProbeInFlight?.promise === promise) healthProbeInFlight = null;
+  }
 }
 
 export function _resetVectorStoreHealthCache(): void {
   healthCache = null;
+  healthProbeInFlight = null;
 }
 
 export async function fetchIndexInfo(): Promise<VectorIndexInfo> {

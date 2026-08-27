@@ -194,6 +194,33 @@ describe("probeVectorStoreHealth", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("同一namespaceへの並行probeは進行中Promiseを共有し、外部fetch 1回に集約される", async () => {
+    let resolveFetch!: (res: Response) => void;
+    const calls: FetchArgs[] = [];
+    vi.stubGlobal("fetch", (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+    });
+    const probes = [
+      probeVectorStoreHealth("2026-08-25.1"),
+      probeVectorStoreHealth("2026-08-25.1"),
+      probeVectorStoreHealth("2026-08-25.1"),
+    ];
+    // キャッシュ未設定でも、進行中の1件へ相乗りして追加fetchを発行しない
+    expect(calls).toHaveLength(1);
+    resolveFetch(jsonResponse(INFO_PAYLOAD));
+    const results = await Promise.all(probes);
+    for (const result of results) {
+      expect(result).toEqual({ reachable: true, namespaceVectorCount: 12 });
+    }
+    expect(calls).toHaveLength(1);
+    // 完了後の呼び出しは通常のキャッシュが効く
+    await probeVectorStoreHealth("2026-08-25.1");
+    expect(calls).toHaveLength(1);
+  });
+
   it("未seedのnamespaceは0件、接続失敗はreachable:falseを返す", async () => {
     stubFetch(() => jsonResponse(INFO_PAYLOAD));
     const missing = await probeVectorStoreHealth("unknown-namespace");

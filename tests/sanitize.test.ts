@@ -28,6 +28,9 @@ describe("containsDisallowedContact", () => {
     expect(containsDisallowedContact("+81 (0)3 1234 5678へ折り返し")).toBe(true);
     // +81の固定電話（国内部分9桁）も検出する
     expect(containsDisallowedContact("+81-3-1234-5678へ連絡")).toBe(true);
+    // +81以外の国番号付き番号・ピリオド区切りの国内番号も検出する
+    expect(containsDisallowedContact("+1 212 555 0123へ電話してください")).toBe(true);
+    expect(containsDisallowedContact("03.1234.5678までご連絡ください")).toBe(true);
     // 電話番号+確認コード等が融合した並びも、先頭の電話番号部分で検出する
     expect(containsDisallowedContact("090-1234-5678 123456 を入力してください")).toBe(true);
   });
@@ -46,10 +49,13 @@ describe("containsDisallowedContact", () => {
     expect(containsDisallowedContact("０３ー１２３４ー５６７８")).toBe(true);
   });
 
-  it("年号・金額を誤検出しない", () => {
+  it("年号・金額・郵便番号を誤検出しない", () => {
     expect(containsDisallowedContact("2026年に公表された事例です")).toBe(false);
     expect(containsDisallowedContact("5000円を請求された事例があります")).toBe(false);
     expect(containsDisallowedContact("5万円の振り込みを求められた")).toBe(false);
+    // ピリオドを区切りへ追加しても小数・郵便番号（0始まり7桁）を誤検出しない
+    expect(containsDisallowedContact("手数料は0.5%だと言われた")).toBe(false);
+    expect(containsDisallowedContact("〒060-0001宛に送れと言われた")).toBe(false);
   });
 
   it("配列群のどこかに許可外番号があれば検出する", () => {
@@ -104,6 +110,13 @@ describe("redactContactInfo", () => {
     // +81の固定電話（国内部分9桁）も置換する
     expect(redactContactInfo("+81-3-1234-5678へ連絡しろと言われた")).toBe(
       "[電話番号]へ連絡しろと言われた",
+    );
+    // +81以外の国番号付き番号・ピリオド区切りの国内番号も置換する
+    expect(redactContactInfo("+1 212 555 0123に電話しろと言われた")).toBe(
+      "[電話番号]に電話しろと言われた",
+    );
+    expect(redactContactInfo("03.1234.5678へ折り返せと言われた")).toBe(
+      "[電話番号]へ折り返せと言われた",
     );
   });
 

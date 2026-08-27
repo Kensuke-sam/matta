@@ -143,26 +143,24 @@ export function ResultView({
         className="border border-dashed border-term-green/35 bg-term-bg/60 p-4"
       >
         <summary className="cursor-pointer select-none text-sm font-bold text-term-green">
-          審査用: 検索根拠と類似度（通常の相談では開く必要はありません）
+          審査用: 検索根拠と類似度
         </summary>
         <div className="mt-3 space-y-3 text-sm text-term-fg/80">
           <p>
-            検索バックエンド:{" "}
+            検索基盤:{" "}
             <SearchBackendStatus
               backend={result.search_backend}
               fallback={result.search_fallback}
             />{" "}
-            / Embeddingモデル:{" "}
+            / Embedding:{" "}
             <code className="bg-term-green/10 px-1 font-display text-term-green">
               {result.embedding_model}
-            </code>
-          </p>
-          <p>
-            生成モデル:{" "}
+            </code>{" "}
+            / 生成:{" "}
             <code className="bg-term-green/10 px-1 font-display text-term-green">
               {result.model}
             </code>{" "}
-            / Embedding検索 Top {result.evidence.length} / コーパス版:{" "}
+            / コーパス:{" "}
             <code className="bg-term-green/10 px-1 font-display text-term-green">
               {result.corpus_version}
             </code>
@@ -174,13 +172,11 @@ export function ResultView({
                   [{i + 1}] {item.title}
                 </p>
                 <p className="mt-0.5">
-                  コサイン類似度:{" "}
+                  類似度:{" "}
                   <span className="font-display text-term-green" data-testid={`similarity-${i}`}>
                     {item.similarity.toFixed(3)}
-                  </span>
-                </p>
-                <p className="mt-0.5">
-                  出典:{" "}
+                  </span>{" "}
+                  / 出典:{" "}
                   <a
                     href={item.sourceUrl}
                     target="_blank"
@@ -273,16 +269,24 @@ export function InsufficientView({
           className="border border-dashed border-term-green/35 bg-term-bg/60 p-4"
         >
           <summary className="cursor-pointer select-none text-sm font-bold text-term-green">
-            審査用: 停止理由の検索情報（通常の相談では開く必要はありません）
+            審査用: 停止理由の検索情報
           </summary>
           <div className="mt-3 space-y-2 text-sm text-term-fg/80">
             <p>
-              検索バックエンド:{" "}
-              <SearchBackendStatus backend={search.backend} fallback={search.fallback} />
+              検索基盤:{" "}
+              <SearchBackendStatus backend={search.backend} fallback={search.fallback} />{" "}
+              / Embedding:{" "}
+              <code className="bg-term-green/10 px-1 font-display text-term-green">
+                {search.embedding_model}
+              </code>{" "}
+              / コーパス:{" "}
+              <code className="bg-term-green/10 px-1 font-display text-term-green">
+                {search.corpus_version}
+              </code>
             </p>
             {search.stop_reason === "below_threshold" ? (
               <p>
-                最上位の類似度:{" "}
+                最上位の類似度{" "}
                 <span className="font-display text-term-amber" data-testid="top-similarity">
                   {search.top_similarity === null ? "なし" : search.top_similarity.toFixed(3)}
                 </span>{" "}
@@ -292,25 +296,15 @@ export function InsufficientView({
               </p>
             ) : (
               <p>
-                最上位の類似度は{" "}
+                最上位の類似度{" "}
                 <span className="font-display text-term-amber" data-testid="top-similarity">
                   {search.top_similarity === null ? "なし" : search.top_similarity.toFixed(3)}
                 </span>{" "}
                 （閾値{" "}
                 <span className="font-display text-term-fg">{search.threshold.toFixed(3)}</span>{" "}
-                以上）でしたが、生成モデルが取得資料は相談内容と無関係と判定したため、推測で回答せず停止しました
+                以上）は取得できましたが、生成モデルが資料を相談内容と無関係と判定したため、推測で回答せず停止しました
               </p>
             )}
-            <p>
-              Embeddingモデル:{" "}
-              <code className="bg-term-green/10 px-1 font-display text-term-green">
-                {search.embedding_model}
-              </code>{" "}
-              / コーパス版:{" "}
-              <code className="bg-term-green/10 px-1 font-display text-term-green">
-                {search.corpus_version}
-              </code>
-            </p>
           </div>
         </details>
       )}

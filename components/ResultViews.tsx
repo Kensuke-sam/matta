@@ -135,7 +135,7 @@ export function ResultView({
 
       <p className="text-sm leading-relaxed text-term-muted">
         この結果は、取得した公的資料に基づく参考情報です。個別の連絡が詐欺かどうかを断定するものではありません。
-        最終的な確認は上の公式窓口をご利用ください。
+        最終的な確認は公式の相談窓口をご利用ください。
       </p>
 
       <details

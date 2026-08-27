@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   // ホームディレクトリ直下のpackage-lock.jsonをworkspace rootと誤検知しないよう固定する
   turbopack: {
     root: import.meta.dirname,

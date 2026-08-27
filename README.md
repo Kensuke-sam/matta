@@ -96,48 +96,37 @@ vercel env add MATTA_DEMO_PIN production
 
 ## Cloud9でのプレビュー（standalone成果物）
 
-Cloud9のルートボリューム上では依存パッケージのインストールやビルドを行わず、GitHub ActionsがLinux環境で作成したstandalone成果物だけを配置する。
+Cloud9のルートボリューム上では依存パッケージのインストールやビルドを行わず、GitHub ActionsがLinux環境で検証・作成したstandalone成果物だけを配置する。
 この手順には既存のAWS Cloud9環境が必要になる。AWS Cloud9は新規顧客への提供を終了しているため、新しいAWSアカウントでは環境を作成できない。
 Cloud9側にはNode.js 20.9.0以上が必要になる。
 
-### 1. GitHub Actionsから成果物を取得する
+### 1. Gitの接続を準備する
 
-1. GitHubでこのリポジトリの **Actions** を開く
-2. **CI** ワークフローの成功した実行を開く。成果物がない場合は、**Run workflow** から`main`のCIを実行する
-3. 画面下部の **Artifacts** から `matta-standalone-linux-x64` をダウンロードする
-4. ダウンロードしたZIPを手元のPCで展開し、`matta-standalone-linux-x64.tar.gz`を取り出す
+Cloud9に、登録済みDeploy keyの公開鍵と対になる秘密鍵を置く。GitHubリポジトリにはその公開鍵をDeploy keyとして登録し、Cloud9の`origin`はSSH URLにする。
+Cloud9上のリポジトリで接続を確認する。
 
-成果物の保存期間はCI実行後7日間。
+```bash
+git remote get-url origin
+git ls-remote origin HEAD
+```
+
+1行目が`git@github.com:`で始まり、2行目がコミットIDを返せばよい。Deploy keyはGitHub Actions Artifact APIへアクセスできないため、CIは検証済みの`matta-standalone-linux-x64.tar.gz`だけをGit経由で配布する`cloud9-runtime`ブランチを作る。
 成果物には`.env.local`やAPIキーなどの秘密値を含めていない。
 
-### 2. Cloud9へ配置する
+### 2. 成果物を配置する
 
-Cloud9 IDEで`matta-standalone-linux-x64.tar.gz`を`~/environment`へアップロードする。
-展開前に、ディスク容量とinodeに余裕があることを確認する。
-
-```bash
-df -h /
-df -i /
-```
-
-初回は実行用ディレクトリを作り、成果物を展開する。
+`main`のCIとpublish-cloud9ジョブが成功してから、Cloud9上で実行する。
 
 ```bash
-mkdir -p ~/environment/matta-runtime
-tar -xzf ~/environment/matta-standalone-linux-x64.tar.gz \
-  -C ~/environment/matta-runtime
-rm ~/environment/matta-standalone-linux-x64.tar.gz
+git pull --ff-only origin main
+bash scripts/deploy-cloud9-runtime.sh
 ```
 
-`server.js`が配置されたことを確認する。
-
-```bash
-ls ~/environment/matta-runtime/server.js
-```
+スクリプトはDeploy keyによるSSH認証で`cloud9-runtime`から取得し、`~/environment/matta-runtime`を置き換える。展開後に`server.js`があることを確認してから置き換え、既存の`.env.local`は保持する。
 
 ### 3. 環境変数を設定する
 
-実行用ディレクトリに`.env.local`を作成する。
+初回だけ実行用ディレクトリに`.env.local`を作成する。
 
 ```bash
 nano ~/environment/matta-runtime/.env.local
@@ -155,7 +144,7 @@ MATTA_SEARCH_BACKEND=local
 
 秘密値はGitHub、README、チャット、シェルのコマンド履歴へ書かない。
 
-### 4. サーバーを起動する
+### 4. サーバーを起動して表示する
 
 Node.jsのバージョンを確認する。
 
@@ -171,8 +160,7 @@ nvm use 20
 nvm alias default 20
 ```
 
-Cloud9の内蔵プレビューが対応するポート8080でstandaloneサーバーを起動する。
-Cloud9上で`npm ci`や`npm run build`を実行する必要はない。
+Cloud9の内蔵プレビューが対応するポート8080でstandaloneサーバーを起動する。Cloud9上で`npm ci`や`npm run build`を実行する必要はない。
 
 ```bash
 cd ~/environment/matta-runtime
@@ -188,37 +176,28 @@ curl -sS http://127.0.0.1:8080/api/health | python3 -m json.tool
 `openai_configured`と`pin_configured`が`true`、`search_backend`が`local`なら起動準備は完了している。
 環境変数を修正した場合は、`Ctrl+C`でサーバーを停止してから起動し直す。
 
-### 5. Cloud9で表示する
-
-1. Cloud9 IDEの **Preview** から **Preview Running Application** を選ぶ
-2. 埋め込みプレビュー右上の「新しいブラウザータブで開く」ボタンを押す
-3. 新しいタブのCloud9プレビューURLでPINを入力する
-
+Cloud9 IDEの **Preview** から **Preview Running Application** を選び、埋め込みプレビュー右上の「新しいブラウザータブで開く」ボタンを押す。PIN入力から相談実行まで新しいタブで操作する。
 埋め込みプレビューはiframe内で動くため、ブラウザーが認証Cookieを次のAPIリクエストへ送らず、相談送信時にPIN画面へ戻る場合がある。
-PIN入力から相談実行まで、新しいブラウザータブで操作する。
 `localhost:8080`ではなく、Cloud9が発行する次の形式のURLを使う。
 
 ```text
 https://<環境ID>.vfs.cloud9.<リージョン>.amazonaws.com/
 ```
 
-このURLはCloud9 IDEを開いている同じブラウザーでの確認用であり、チームへの共有URLには使わない。
-確認を終了するときは、サーバーを起動したターミナルで`Ctrl+C`を押す。
+このURLはCloud9 IDEを開いている同じブラウザーでの確認用であり、チームへの共有URLには使わない。確認を終了するときは、サーバーを起動したターミナルで`Ctrl+C`を押す。
 
-### 成果物を更新する
+### 更新する
 
-新しい成果物へ入れ替えるときは、現在の`.env.local`を一時退避してから実行用ディレクトリを置き換える。
+サーバーを停止してから、`main`を取得してスクリプトを再実行し、サーバーを起動し直す。`.env.local`はスクリプトが保持する。
 
 ```bash
-mv ~/environment/matta-runtime/.env.local ~/environment/matta-runtime.env.local
-rm -rf ~/environment/matta-runtime
-mkdir -p ~/environment/matta-runtime
-tar -xzf ~/environment/matta-standalone-linux-x64.tar.gz \
-  -C ~/environment/matta-runtime
-mv ~/environment/matta-runtime.env.local ~/environment/matta-runtime/.env.local
-chmod 600 ~/environment/matta-runtime/.env.local
-rm ~/environment/matta-standalone-linux-x64.tar.gz
+git pull --ff-only origin main
+bash scripts/deploy-cloud9-runtime.sh
 ```
+
+### Actions Artifactの手動フォールバック
+
+`cloud9-runtime`を使えない場合だけ、成功したCIの **Artifacts** から`matta-standalone-linux-x64`をダウンロードし、ZIPを展開してtarをCloud9へアップロードする。サーバーを停止し、`.env.local`を退避してから`~/environment/matta-runtime`を作り直してtarを展開し、`.env.local`を戻す。
 
 AWS公式資料: [AWS Cloud9 IDEで実行中のアプリケーションをプレビューする](https://docs.aws.amazon.com/cloud9/latest/user-guide/app-preview.html)
 

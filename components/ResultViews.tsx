@@ -1,6 +1,12 @@
 "use client";
 
-import type { CompleteResult, IncidentCard, SafeContact, SearchDebugInfo } from "@/lib/types";
+import type {
+  CompleteResult,
+  IncidentCard,
+  SafeContact,
+  SearchBackend,
+  SearchDebugInfo,
+} from "@/lib/types";
 
 export function ContactCards({ contacts }: { contacts: SafeContact[] }) {
   return (
@@ -19,6 +25,42 @@ export function ContactCards({ contacts }: { contacts: SafeContact[] }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function OfficialContactSection({ contacts }: { contacts: SafeContact[] }) {
+  return (
+    <section aria-label="公式の相談窓口">
+      <h3 className="mb-2 flex items-center gap-2 text-base font-bold text-term-fg">
+        <span aria-hidden className="h-2 w-2 shrink-0 bg-term-green" />
+        公式の相談窓口
+      </h3>
+      <ContactCards contacts={contacts} />
+    </section>
+  );
+}
+
+function SearchBackendStatus({
+  backend,
+  fallback,
+}: {
+  backend: SearchBackend;
+  fallback: boolean;
+}) {
+  return (
+    <>
+      <code
+        className="bg-term-green/10 px-1 font-display text-term-green"
+        data-testid="search-backend"
+      >
+        {backend === "upstash" ? "Upstash Vector" : "ローカル意味検索"}
+      </code>
+      {fallback && (
+        <span className="ml-2 text-term-amber" data-testid="search-fallback">
+          （Vector DB障害のためローカル検索で代替）
+        </span>
+      )}
+    </>
   );
 }
 
@@ -89,13 +131,7 @@ export function ResultView({
       <BulletCard title="今、してはいけないこと" items={result.do_not} tone="danger" />
       <BulletCard title="安全な確認方法" items={result.safe_verification} tone="safe" />
 
-      <section aria-label="公式の相談窓口">
-        <h3 className="mb-2 flex items-center gap-2 text-base font-bold text-term-fg">
-          <span aria-hidden className="h-2 w-2 shrink-0 bg-term-green" />
-          公式の相談窓口
-        </h3>
-        <ContactCards contacts={contacts} />
-      </section>
+      <OfficialContactSection contacts={contacts} />
 
       <p className="text-sm leading-relaxed text-term-muted">
         この結果は、取得した公的資料に基づく参考情報です。個別の連絡が詐欺かどうかを断定するものではありません。
@@ -112,17 +148,10 @@ export function ResultView({
         <div className="mt-3 space-y-3 text-sm text-term-fg/80">
           <p>
             検索バックエンド:{" "}
-            <code
-              className="bg-term-green/10 px-1 font-display text-term-green"
-              data-testid="search-backend"
-            >
-              {result.search_backend === "upstash" ? "Upstash Vector" : "ローカル意味検索"}
-            </code>
-            {result.search_fallback && (
-              <span className="ml-2 text-term-amber" data-testid="search-fallback">
-                （Vector DB障害のためローカル検索で代替）
-              </span>
-            )}{" "}
+            <SearchBackendStatus
+              backend={result.search_backend}
+              fallback={result.search_fallback}
+            />{" "}
             / Embeddingモデル:{" "}
             <code className="bg-term-green/10 px-1 font-display text-term-green">
               {result.embedding_model}
@@ -197,13 +226,7 @@ export function IncidentView({
         </ol>
         <p className="mt-4 text-sm leading-relaxed text-term-red">{incident.note}</p>
       </section>
-      <section aria-label="公式の相談窓口">
-        <h3 className="mb-2 flex items-center gap-2 text-base font-bold text-term-fg">
-          <span aria-hidden className="h-2 w-2 shrink-0 bg-term-green" />
-          公式の相談窓口
-        </h3>
-        <ContactCards contacts={contacts} />
-      </section>
+      <OfficialContactSection contacts={contacts} />
     </div>
   );
 }
@@ -228,13 +251,7 @@ export function InsufficientView({
         </h2>
         <p className="mt-2 text-base leading-relaxed text-term-fg/80">{message}</p>
       </section>
-      <section aria-label="公式の相談窓口">
-        <h3 className="mb-2 flex items-center gap-2 text-base font-bold text-term-fg">
-          <span aria-hidden className="h-2 w-2 shrink-0 bg-term-green" />
-          公式の相談窓口
-        </h3>
-        <ContactCards contacts={contacts} />
-      </section>
+      <OfficialContactSection contacts={contacts} />
 
       {search && (
         <details
@@ -247,17 +264,7 @@ export function InsufficientView({
           <div className="mt-3 space-y-2 text-sm text-term-fg/80">
             <p>
               検索バックエンド:{" "}
-              <code
-                className="bg-term-green/10 px-1 font-display text-term-green"
-                data-testid="search-backend"
-              >
-                {search.backend === "upstash" ? "Upstash Vector" : "ローカル意味検索"}
-              </code>
-              {search.fallback && (
-                <span className="ml-2 text-term-amber" data-testid="search-fallback">
-                  （Vector DB障害のためローカル検索で代替）
-                </span>
-              )}
+              <SearchBackendStatus backend={search.backend} fallback={search.fallback} />
             </p>
             {search.stop_reason === "below_threshold" ? (
               <p>

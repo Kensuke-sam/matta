@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { CHUNKS } from "@/lib/corpus";
 import type { EmbedFn } from "@/lib/openai";
+import { containsDisallowedContact } from "@/lib/sanitize";
 import {
   _resetCorpusCache,
   chunkEmbeddingText,
@@ -88,19 +89,32 @@ describe("searchCorpus", () => {
 });
 
 describe("コーパス", () => {
-  it("12チャンクで、必須フィールドがそろっている", () => {
-    expect(CHUNKS).toHaveLength(12);
+  it("基本12+チーム収集193の205チャンクで、必須フィールドがそろっている", () => {
+    expect(CHUNKS).toHaveLength(205);
     for (const chunk of CHUNKS) {
       expect(chunk.id).toBeTruthy();
       expect(chunk.title).toBeTruthy();
       expect(chunk.content.length).toBeGreaterThan(50);
+      expect(chunk.source.name).toBeTruthy();
       expect(chunk.source.url).toMatch(/^https:\/\//);
       expect(chunk.source.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       expect(chunkEmbeddingText(chunk)).toContain(chunk.title);
+      expect(["police", "delivery", "yamibaito"]).toContain(chunk.domain);
     }
-    expect(new Set(CHUNKS.map((c) => c.id)).size).toBe(12);
-    expect(CHUNKS.filter((c) => c.domain === "police")).toHaveLength(4);
-    expect(CHUNKS.filter((c) => c.domain === "delivery")).toHaveLength(4);
-    expect(CHUNKS.filter((c) => c.domain === "yamibaito")).toHaveLength(4);
+    expect(new Set(CHUNKS.map((c) => c.id)).size).toBe(205);
+    expect(CHUNKS.filter((c) => c.domain === "police")).toHaveLength(36);
+    expect(CHUNKS.filter((c) => c.domain === "delivery")).toHaveLength(95);
+    expect(CHUNKS.filter((c) => c.domain === "yamibaito")).toHaveLength(74);
+  });
+
+  it("全チャンクの本文が許可外連絡先を含まない（生成出力フィルタと衝突しない）", () => {
+    // チーム収集資料の偽SMS例文由来の電話番号・URL等は、build:corpusが
+    // redactContactInfoで置換済みであることを固定する
+    for (const chunk of CHUNKS) {
+      expect(
+        containsDisallowedContact(chunkEmbeddingText(chunk)),
+        `chunk ${chunk.id} に許可外連絡先が残っています`,
+      ).toBe(false);
+    }
   });
 });

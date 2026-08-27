@@ -1,5 +1,5 @@
 /**
- * lib/corpus.tsの12チャンクをUpstash Vectorへ冪等にseedする。
+ * lib/corpus.tsの全チャンクをUpstash Vectorへ冪等にseedする。
  *
  *   npm run seed:vector
  *
@@ -77,20 +77,25 @@ async function main(): Promise<void> {
     );
   }
 
-  await upsertVectors(
-    CORPUS_VERSION,
-    CHUNKS.map((chunk, i) => ({
-      id: chunk.id,
-      vector: vectors[i],
-      // 検索側(lib/retrieval.ts)はこの4キーを必須として完全一致検証する
-      metadata: {
-        chunk_id: chunk.id,
-        domain: chunk.domain,
-        corpus_version: CORPUS_VERSION,
-        embedding_model: embeddingModel(),
-      },
-    })),
-  );
+  // 200件超×1536次元を一括送信するとリクエスト本文が数MBになり
+  // Upstashの上限に近づくため、分割して登録する（IDごとの上書きなので分割しても冪等）
+  const UPSERT_BATCH_SIZE = 100;
+  for (let start = 0; start < CHUNKS.length; start += UPSERT_BATCH_SIZE) {
+    await upsertVectors(
+      CORPUS_VERSION,
+      CHUNKS.slice(start, start + UPSERT_BATCH_SIZE).map((chunk, i) => ({
+        id: chunk.id,
+        vector: vectors[start + i],
+        // 検索側(lib/retrieval.ts)はこの4キーを必須として完全一致検証する
+        metadata: {
+          chunk_id: chunk.id,
+          domain: chunk.domain,
+          corpus_version: CORPUS_VERSION,
+          embedding_model: embeddingModel(),
+        },
+      })),
+    );
+  }
 
   // 反映（pending解消）を待ってから件数を検証する
   for (let attempt = 0; attempt < 10; attempt++) {

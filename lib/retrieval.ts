@@ -102,7 +102,7 @@ const CHUNK_BY_ID = new Map(CHUNKS.map((chunk) => [chunk.id, chunk]));
  * といったストア異常であり、類似度不足とは別に扱う（呼び出し側でフォールバック対象）。
  */
 function resolveVectorMatches(matches: VectorQueryMatch[], k: number): Retrieved[] {
-  // seed済みのnamespace（12件）へのTop K検索は必ずK件返る
+  // 全チャンクseed済みのnamespaceへのTop K検索は必ずK件返る
   if (matches.length !== Math.min(k, CHUNKS.length)) {
     throw new VectorStoreError("vector store returned an unexpected match count");
   }

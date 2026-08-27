@@ -120,6 +120,7 @@ test("対象外入力では専用案内を表示し、原入力を編集して�
   await expectNoHorizontalScroll(page);
 
   await input.fill("警察を名乗る人がビデオ通話で警察手帳を見せ、誰にも話すなと言っています。");
+  await expect(page.getByRole("heading", { name: "MATTAの対象外の内容です" })).toBeHidden();
   await page.getByRole("button", { name: "この内容で確認する" }).click();
   await expect(page.getByRole("heading", { name: "危険サイン" })).toBeVisible();
   await expectNoHorizontalScroll(page);

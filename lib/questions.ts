@@ -32,7 +32,7 @@ export function questionTextById(id: QuestionId): string {
   return QUESTION_BANK[id];
 }
 
-/** LLMが選んだIDを固定文言に解決する。未知IDは無視し、最大2問に制限する */
+/** 検証済みの質問IDを重複なく固定文言に解決し、最大2問に制限する */
 export function resolveQuestions(ids: string[]): { id: QuestionId; text: string }[] {
   const seen = new Set<QuestionId>();
   for (const id of ids) {

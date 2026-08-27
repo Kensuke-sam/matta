@@ -1,4 +1,4 @@
-import teamChunks from "./corpus-team.json";
+import teamChunks from "./corpus-team.json" with { type: "json" };
 import type { Chunk } from "./types";
 
 /**

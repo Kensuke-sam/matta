@@ -248,7 +248,10 @@ export default function Home() {
             {(!result || result.status === "out_of_scope") && !questions && (
               <ConsultForm
                 message={message}
-                onChangeMessage={setMessage}
+                onChangeMessage={(nextMessage) => {
+                  setMessage(nextMessage);
+                  setResult(null);
+                }}
                 onSubmit={() => analyze([])}
                 loading={loading}
               />

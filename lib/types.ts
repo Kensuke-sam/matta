@@ -75,6 +75,7 @@ export type AnalyzeResponse =
   | { status: "needs_more_info"; questions: QuestionItem[] }
   | { status: "complete"; result: CompleteResult }
   | { status: "incident"; incident: IncidentCard; contacts: SafeContact[] }
+  | { status: "out_of_scope"; message: string }
   | {
       status: "insufficient_evidence";
       message: string;

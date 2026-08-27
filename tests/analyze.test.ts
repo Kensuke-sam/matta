@@ -26,7 +26,7 @@ function domainVector(text: string, index: number, isCorpus: boolean): number[] 
   if (isCorpus) {
     return [...DOMAIN_BASE[CHUNKS[index].domain], (0.2 * (index + 1)) / CHUNKS.length];
   }
-  if (/(闇バイト|副業|身分証|即日即金|高収入)/.test(text)) return [0, 0, 1, 0];
+  if (/(闇バイト|副業|身分証|即日即金|高収入|人材派遣|求人|勤務先|面接)/.test(text)) return [0, 0, 1, 0];
   if (/(不在|宅配|フィッシング|偽サイト|SMS)/.test(text)) return [0, 1, 0, 0];
   if (/(警察|逮捕|取り調べ)/.test(text)) return [1, 0, 0, 0];
   return [0, 0, 0, 1];
@@ -161,7 +161,7 @@ describe("runAnalyze: 分岐", () => {
     const { deps } = makeDeps({
       triage: JSON.stringify({
         category: "consultation",
-        missing: ["q_org", "q_request", "q_channel"],
+        missing: ["q_org", "q_request"],
       }),
     });
     const res = await runAnalyze(input("怪しい連絡が来ました"), deps);
@@ -174,13 +174,14 @@ describe("runAnalyze: 分岐", () => {
     }
   });
 
-  it("未知の質問IDは無視し、有効なIDが無ければ検索へ進む", async () => {
+  it("未知の質問IDは出力不正としてリトライ後に停止する", async () => {
     const { deps, embedCalls } = makeDeps({
       triage: JSON.stringify({ category: "consultation", missing: ["unknown_id"] }),
     });
-    const res = await runAnalyze(input("警察を名乗る電話が来ました"), deps);
-    expect(res.status).toBe("complete");
-    expect(embedCalls.length).toBeGreaterThan(0);
+    await expect(runAnalyze(input("警察を名乗る電話が来ました"), deps)).rejects.toMatchObject({
+      code: "invalid_output",
+    });
+    expect(embedCalls).toHaveLength(0);
   });
 
   it("回答済みならトリアージが質問を出しても再質問しない", async () => {
@@ -247,25 +248,58 @@ describe("runAnalyze: 分岐", () => {
     }
   });
 
-  it("圏外入力は生成せずinsufficient_evidenceで停止する", async () => {
-    const { deps, chatCalls } = makeDeps();
+  it("対象外はトリアージ1回だけで専用案内を返し、検索・生成を開始しない", async () => {
+    const { deps, chatCalls, embedCalls } = makeDeps({
+      triage: JSON.stringify({ category: "out_of_scope", missing: [] }),
+    });
     const res = await runAnalyze(input("今日の夕飯のレシピを教えてください"), deps);
-    expect(res.status).toBe("insufficient_evidence");
-    if (res.status === "insufficient_evidence") {
-      expect(res.contacts.length).toBeGreaterThan(0);
-      // 審査用に「なぜ停止したか」の検索情報が入る
-      expect(res.search).toMatchObject({
-        backend: "local",
-        fallback: false,
-        stop_reason: "below_threshold",
-        threshold: 0.3,
-      });
-      expect(res.search?.top_similarity).not.toBeNull();
-      expect(res.search?.top_similarity ?? 1).toBeLessThan(0.3);
-      expect(res.search?.embedding_model).toBeTruthy();
-      expect(res.search?.corpus_version).toBeTruthy();
+    expect(res.status).toBe("out_of_scope");
+    if (res.status === "out_of_scope") {
+      expect(res.message).toContain("不審な電話・メッセージ・勧誘");
+      expect(res).not.toHaveProperty("contacts");
+      expect(res).not.toHaveProperty("search");
     }
+    expect(chatCalls.filter((c) => c.kind === "triage")).toHaveLength(1);
     expect(chatCalls.filter((c) => c.kind === "generation")).toHaveLength(0);
+    expect(embedCalls).toHaveLength(0);
+  });
+
+  it("短い不審な相談はconsultationなら対象外にせず検索へ進む", async () => {
+    const { deps, embedCalls } = makeDeps({
+      triage: JSON.stringify({ category: "consultation", missing: [] }),
+    });
+    const res = await runAnalyze(input("警察を名乗る電話が来ました"), deps);
+    expect(res.status).toBe("complete");
+    expect(embedCalls.length).toBeGreaterThan(0);
+  });
+
+  it("Issue #8相当で追加事実に危険根拠がなければrelated:falseで停止する", async () => {
+    const { deps, chatCalls } = makeDeps({
+      triage: JSON.stringify({ category: "consultation", missing: [] }),
+      generation: JSON.stringify({ related: false }),
+    });
+    const res = await runAnalyze(
+      input("登録している人材派遣会社から求人の案内が届き、勤務先の面接を受けるよう求められました。ほかの情報はありません。", [
+        { questionId: "q_official_route", answer: "公式サイトにも案内があります" },
+        { questionId: "q_additional_request", answer: "追加の要求はありません" },
+      ]),
+      deps,
+    );
+    expect(res.status).toBe("insufficient_evidence");
+    expect(chatCalls.filter((c) => c.kind === "generation")).toHaveLength(1);
+  });
+
+  it("Issue #9相当の具体的な警察なりすまし相談はcompleteへ進む", async () => {
+    const { deps } = makeDeps({
+      triage: JSON.stringify({ category: "consultation", missing: [] }),
+    });
+    const res = await runAnalyze(
+      input(
+        "警察を名乗る人がビデオ通話で警察手帳を見せ、誰にも話すなと言っています。運動しているかとも聞かれました。",
+      ),
+      deps,
+    );
+    expect(res.status).toBe("complete");
   });
 
   it("生成側がrelated:falseを返したら、類似度が閾値以上でもmodel_unrelatedとして停止する", async () => {

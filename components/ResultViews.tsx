@@ -231,6 +231,20 @@ export function IncidentView({
   );
 }
 
+export function OutOfScopeView({ message }: { message: string }) {
+  return (
+    <div className="space-y-4" aria-label="MATTAの対象外の案内">
+      <section className="corner-frame border border-term-amber/40 bg-term-panel/80 p-5 sm:p-7">
+        <p aria-hidden className="term-label text-term-muted">
+          MATTA Scope
+        </p>
+        <h2 className="mt-1.5 text-lg font-bold text-term-fg">MATTAの対象外の内容です</h2>
+        <p className="mt-2 text-base leading-relaxed text-term-fg/80">{message}</p>
+      </section>
+    </div>
+  );
+}
+
 export function InsufficientView({
   message,
   contacts,

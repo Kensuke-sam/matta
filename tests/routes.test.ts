@@ -321,6 +321,17 @@ describe("POST /api/analyze", () => {
     expect(res.status).toBe(504);
   });
 
+  it("対象外入力は相談窓口と検索情報なしの専用statusを返す", async () => {
+    const cookie = await login();
+    mockState.triage = JSON.stringify({ category: "out_of_scope", missing: [] });
+    const res = await analyzeRoute.POST(
+      jsonRequest("/api/analyze", "POST", { message: "今日の夕飯を考えて" }, cookie),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ status: "out_of_scope", message: expect.any(String) });
+  });
+
   it("既遂入力はincidentカードを返す", async () => {
     const cookie = await login();
     mockState.triage = JSON.stringify({ category: "incident", missing: [] });

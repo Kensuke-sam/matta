@@ -11,7 +11,7 @@ const PORT = Number(process.env.MOCK_OPENAI_PORT ?? 8965);
 const CORPUS_SIZE = CORPUS_META.length;
 
 function baseVec(text) {
-  if (/(闇バイト|副業|身分証|即日即金|高収入)/.test(text)) return [0, 0, 1];
+  if (/(闇バイト|副業|身分証|即日即金|高収入|人材派遣|求人|勤務先|面接)/.test(text)) return [0, 0, 1];
   if (/(不在|宅配|フィッシング|偽サイト|SMS)/.test(text)) return [0, 1, 0];
   if (/(警察|逮捕|取り調べ)/.test(text)) return [1, 0, 0];
   return null; // 圏外
@@ -85,6 +85,13 @@ const server = createServer(async (req, res) => {
       const hasAnswers = user.includes("# 追加質問への回答");
       if (INCIDENT_RE.test(user)) {
         payload = { category: "incident", missing: [] };
+      } else if (/(夕飯|献立|レシピ)/.test(user)) {
+        payload = { category: "out_of_scope", missing: [] };
+      } else if (!hasAnswers && /人材派遣会社.*求人.*勤務先.*面接/.test(user)) {
+        payload = {
+          category: "consultation",
+          missing: ["q_official_route", "q_additional_request"],
+        };
       } else if (!hasAnswers && user.includes("変な連絡が来て困っています")) {
         // 質問フローE2E用: 初回だけ固定質問2問を要求する
         payload = { category: "consultation", missing: ["q_org", "q_request"] };
@@ -98,18 +105,50 @@ const server = createServer(async (req, res) => {
         .split("\n")
         .filter((line) => !line.trimStart().startsWith("- 質問:"))
         .join("\n");
+      if (judgeText.includes("公式サイトにも案内があります")) {
+        payload = { related: false };
+        json(res, 200, {
+          id: "mock-completion",
+          object: "chat.completion",
+          model: body.model,
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: JSON.stringify(payload) },
+              finish_reason: "stop",
+            },
+          ],
+        });
+        return;
+      }
       const base = baseVec(judgeText);
       const domainKey =
         base === null ? "police" : base[2] === 1 ? "yami" : base[1] === 1 ? "delivery" : "police";
+      const isIssue9 =
+        judgeText.includes("ビデオ通話") &&
+        judgeText.includes("警察手帳") &&
+        judgeText.includes("誰にも話すな");
       const byDomain = {
-        police: {
-          similar_cases: [
-            "警察官を名乗り口座やお金の確認を求める手口の事例が公的資料にあります",
-          ],
-          safe_verification: [
-            "いったん切って、警察相談専用電話#9110へ自分からかけて確認する",
-          ],
-        },
+        police: isIssue9
+          ? {
+              similar_cases: [
+                "警察を名乗る相手がビデオ通話で警察手帳を見せる手口が、警察の資料にあります",
+              ],
+              danger_signs: ["警察を名乗る相手が「誰にも話すな」と口止めしています"],
+              normal_response: ["警察はビデオ通話で取調べを行いません"],
+              do_not: ["相手が見せた警察手帳だけを本物の証拠として信用しない"],
+              safe_verification: [
+                "通話を切り、警察相談専用電話#9110へ自分からかけて確認する",
+              ],
+            }
+          : {
+              similar_cases: [
+                "警察官を名乗り口座やお金の確認を求める手口の事例が公的資料にあります",
+              ],
+              safe_verification: [
+                "いったん切って、警察相談専用電話#9110へ自分からかけて確認する",
+              ],
+            },
         delivery: {
           similar_cases: [
             "宅配業者を装う不在通知の文面で偽サイトへ誘導する手口が報告されています",

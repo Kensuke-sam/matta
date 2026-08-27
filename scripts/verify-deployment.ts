@@ -16,7 +16,7 @@
  *   2. PINログイン（Cookie取得）
  *   3. 3デモ入力: 必要なら固定質問へ回答した後、complete・期待ドメインの根拠Top 3・バックエンド・フォールバックなし
  *   4. 各デモの言い換え: 同上（Embedding意味検索の言い換え耐性）
- *   5. 圏外入力: insufficient_evidenceで停止（フォールバックしない）
+ *   5. 圏外入力: out_of_scopeで停止（検索・生成を開始しない）
  *   6. 既遂入力: incidentカードへ分岐
  *   7. 各ケース60秒以内
  *
@@ -39,7 +39,7 @@ import type { AnalyzeResponse, AnswerInput, Domain, HealthResponse } from "../li
 const CASE_TIMEOUT_MS = 65_000;
 const TIME_BUDGET_MS = 60_000;
 
-type ExpectedStatus = "complete" | "insufficient_evidence" | "incident";
+type ExpectedStatus = "complete" | "insufficient_evidence" | "incident" | "out_of_scope";
 
 type VerifyCase = {
   label: string;
@@ -244,6 +244,62 @@ async function loginAndGetCookie(url: string, pin: string): Promise<string> {
  * 5項目非空・60秒以内を判定する。Vector導入前の旧デプロイにも使えるよう、
  * search_backend等のVector項目は検査しない。
  */
+async function runIssue8Fixture(url: string, cookie: string): Promise<void> {
+  const text =
+    "登録している人材派遣会社から求人の案内が届き、勤務先の面接を受けるよう求められました。ほかの情報はありません。";
+  const firstStartedAt = Date.now();
+  const first = await requestJson(`${url}/api/analyze`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({ message: text }),
+  });
+  const firstElapsedMs = Date.now() - firstStartedAt;
+  const firstBody = first.body as AnalyzeResponse;
+  check(first.status === 200, "Issue #8: 初回応答が200", `status=${first.status}`);
+  check(
+    firstElapsedMs <= TIME_BUDGET_MS,
+    "Issue #8: 初回応答が60秒以内",
+    `${(firstElapsedMs / 1000).toFixed(1)}s`,
+  );
+  check(firstBody.status === "needs_more_info", "Issue #8: 固定質問へ進む");
+  if (firstBody.status !== "needs_more_info") return;
+
+  const ids = firstBody.questions.map((question) => question.id);
+  check(
+    ids.length === 2 &&
+      ids.includes("q_official_route") &&
+      ids.includes("q_additional_request") &&
+      !ids.includes("q_request"),
+    "Issue #8: 既知の勤務先面接やq_requestを聞き直さず未確認の2項目を質問する",
+    `ids=${ids.join(",")}`,
+  );
+  const secondStartedAt = Date.now();
+  const second = await requestJson(`${url}/api/analyze`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({
+      message: text,
+      answers: [
+        { questionId: "q_official_route", answer: "公式サイトにも案内があります" },
+        { questionId: "q_additional_request", answer: "追加の要求はありません" },
+      ],
+    }),
+  });
+  const secondElapsedMs = Date.now() - secondStartedAt;
+  const secondBody = second.body as AnalyzeResponse;
+  check(second.status === 200, "Issue #8: 回答後の応答が200", `status=${second.status}`);
+  check(
+    secondElapsedMs <= TIME_BUDGET_MS,
+    "Issue #8: 回答後の応答が60秒以内",
+    `${(secondElapsedMs / 1000).toFixed(1)}s`,
+  );
+  check(
+    secondBody.status === "insufficient_evidence",
+    "Issue #8: 危険サインを捏造せず根拠不足で停止する",
+    `実際=${secondBody.status}`,
+  );
+}
+
 async function runDemoGate(url: string, pin: string, runs: number): Promise<void> {
   console.log(`[verify] 本番デモ完走ゲート: ニセ警察デモを${runs}回連続実行します`);
 
@@ -388,9 +444,15 @@ async function main(): Promise<void> {
     })),
     ...PARAPHRASES,
     {
-      label: "圏外入力",
+      label: "対象外入力",
       text: "今日の夕飯の献立を考えてください。",
-      expect: "insufficient_evidence",
+      expect: "out_of_scope",
+    },
+    {
+      label: "Issue #9（警察なりすまし）",
+      text: "警察を名乗る人がビデオ通話で警察手帳を見せ、誰にも話すなと言っています。運動していますかとも聞かれました。",
+      expect: "complete",
+      domain: "police",
     },
     {
       label: "既遂入力",
@@ -483,6 +545,31 @@ async function main(): Promise<void> {
         `${testCase.label}: corpus_version一致`,
         `デプロイ側=${r.corpus_version}`,
       );
+      if (testCase.label === "Issue #9（警察なりすまし）") {
+        const generated = [
+          ...r.similar_cases,
+          ...r.danger_signs,
+          ...r.normal_response,
+          ...r.do_not,
+          ...r.safe_verification,
+        ].join("\n");
+        const groundedFacts = [
+          /警察(?:官)?を(?:名乗|かた|装)/,
+          /ビデオ通話/,
+          /警察手帳|手帳/,
+          /誰にも話|口止め|捜査の秘密/,
+        ];
+        check(
+          groundedFacts.every((pattern) => pattern.test(generated)),
+          "Issue #9: 警察名乗り・ビデオ通話・警察手帳・口止めの事実に基づく",
+          `一致数=${groundedFacts.filter((pattern) => pattern.test(generated)).length}/4`,
+        );
+        check(!generated.includes("運動していますか"), "Issue #9: 相談文だけの質問を危険サインにしない");
+      }
+    }
+    if (body.status === "out_of_scope" && testCase.expect === "out_of_scope") {
+      check(!("contacts" in body), `${testCase.label}: 相談窓口を返さない`);
+      check(!("search" in body), `${testCase.label}: 検索情報を返さない`);
     }
     if (body.status === "insufficient_evidence" && testCase.expect === "insufficient_evidence") {
       check(
@@ -499,6 +586,7 @@ async function main(): Promise<void> {
     }
   }
 
+  await runIssue8Fixture(url, cookie);
   printSummaryAndExit();
 }
 

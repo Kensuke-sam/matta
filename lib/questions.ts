@@ -12,6 +12,10 @@ export const QUESTION_BANK = {
   q_urgency: "「今すぐ」「誰にも言わないで」のような、急かしや口止めはありますか?",
   q_done:
     "お金や個人情報（口座・暗証番号・身分証など）について、すでに何か渡したり入力したりしましたか?",
+  q_official_route:
+    "その案内は、相手の公式サイト・公式アプリ・登録済みの窓口でも確認できますか?",
+  q_additional_request:
+    "最初に説明された用件以外に、お金の支払い、個人情報や身分証の送信、別のアプリへの移動を求められていますか?",
 } as const;
 
 export type QuestionId = keyof typeof QUESTION_BANK;

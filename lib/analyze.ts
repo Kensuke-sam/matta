@@ -1,5 +1,10 @@
 import { CORPUS_VERSION } from "./corpus";
-import { INCIDENT_CARD, INSUFFICIENT_MESSAGE, SAFE_CONTACTS } from "./guidance";
+import {
+  INCIDENT_CARD,
+  INSUFFICIENT_MESSAGE,
+  OUT_OF_SCOPE_MESSAGE,
+  SAFE_CONTACTS,
+} from "./guidance";
 import { detectCompletedIncident } from "./incident-detect";
 import { chatJson, chatModel, embeddingModel, embedTexts, UpstreamError } from "./openai";
 import type { ChatJsonFn, EmbedFn } from "./openai";
@@ -76,6 +81,10 @@ function incidentResponse(): AnalyzeResponse {
   return { status: "incident", incident: INCIDENT_CARD, contacts: SAFE_CONTACTS };
 }
 
+function outOfScopeResponse(): AnalyzeResponse {
+  return { status: "out_of_scope", message: OUT_OF_SCOPE_MESSAGE };
+}
+
 /** クライアントからの回答（questionId）を、固定文言バンクの質問文に解決する */
 function toPromptInput(input: ValidatedInput): PromptInput {
   const answers: QaPair[] = input.answers.flatMap((a) =>
@@ -128,6 +137,11 @@ export async function runAnalyze(
   // 被害後（既遂）: 検索を通さず固定の事故対応カードへ分岐する
   if (triage.category === "incident") {
     return incidentResponse();
+  }
+
+  // 対象外は追加質問・検索・生成をせず、用途を説明する固定案内で停止する
+  if (triage.category === "out_of_scope") {
+    return outOfScopeResponse();
   }
 
   // 追加質問（固定文言・最大2問）。回答済みの場合は再質問しない

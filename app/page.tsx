@@ -4,7 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ConsultForm from "@/components/ConsultForm";
 import PinGate from "@/components/PinGate";
 import QuestionForm from "@/components/QuestionForm";
-import { IncidentView, InsufficientView, ResultView } from "@/components/ResultViews";
+import {
+  IncidentView,
+  InsufficientView,
+  OutOfScopeView,
+  ResultView,
+} from "@/components/ResultViews";
 import { apiRequest, ApiError } from "@/lib/client-api";
 import { SAFE_CONTACTS } from "@/lib/guidance";
 import { parseSharedPin } from "@/lib/share-link";
@@ -240,7 +245,7 @@ export default function Home() {
               </div>
             )}
 
-            {!result && !questions && (
+            {(!result || result.status === "out_of_scope") && !questions && (
               <ConsultForm
                 message={message}
                 onChangeMessage={setMessage}
@@ -281,9 +286,12 @@ export default function Home() {
                   search={result.search}
                 />
               )}
+              {result?.status === "out_of_scope" && (
+                <OutOfScopeView message={result.message} />
+              )}
             </div>
 
-            {result && (
+            {result && result.status !== "out_of_scope" && (
               <button
                 type="button"
                 onClick={reset}

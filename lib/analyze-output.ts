@@ -1,26 +1,46 @@
 import { z } from "zod";
 import { UpstreamError } from "./openai";
 import type { ChatJsonFn } from "./openai";
+import { MAX_QUESTIONS, isQuestionId } from "./questions";
 import { listsContainDisallowedContact } from "./sanitize";
 import { extractJson } from "./validate";
 
-const triageSchema = z.object({
-  category: z.enum(["incident", "consultation"]),
-  missing: z.array(z.string()).optional().default([]),
-});
+const triageSchema = z
+  .object({
+    category: z.enum(["incident", "consultation", "out_of_scope"]),
+    missing: z.array(z.string().refine(isQuestionId, "不明な質問IDです")).max(MAX_QUESTIONS),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (
+      (value.category === "incident" || value.category === "out_of_scope") &&
+      value.missing.length > 0
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["missing"],
+        message: "incidentとout_of_scopeのmissingは空配列です",
+      });
+    }
+    if (new Set(value.missing).size !== value.missing.length) {
+      ctx.addIssue({ code: "custom", path: ["missing"], message: "質問IDが重複しています" });
+    }
+  });
 
-const bullets = z.array(z.string().trim().min(1).max(200)).min(1).max(6);
+const bullets = z.array(z.string().trim().min(1).max(200)).min(1).max(4);
 
-const generationSchema = z.object({
-  related: z.boolean().optional().default(true),
-  similar_cases: bullets,
-  danger_signs: bullets,
-  normal_response: bullets,
-  do_not: bullets,
-  safe_verification: bullets,
-});
+const generationSchema = z
+  .object({
+    related: z.literal(true),
+    similar_cases: bullets,
+    danger_signs: bullets,
+    normal_response: bullets,
+    do_not: bullets,
+    safe_verification: bullets,
+  })
+  .strict();
 
-const unrelatedSchema = z.object({ related: z.literal(false) });
+const unrelatedSchema = z.object({ related: z.literal(false) }).strict();
 
 /**
  * LLM呼び出し→JSON抽出→検証を、失敗時1回だけリトライして行う。

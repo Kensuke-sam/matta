@@ -31,9 +31,11 @@ test("警察デモがUpstash Vector検索で完走し、インスペクタへバ
   await expect(inspector.getByText(CORPUS_VERSION)).toBeVisible();
 });
 
-test("圏外入力はUpstash検索でも類似度不足で停止し、フォールバックしない", async ({ page }) => {
+test("曖昧な不審連絡の相談はUpstash検索でも類似度不足で停止し、フォールバックしない", async ({ page }) => {
   await loginWithPin(page);
-  await page.getByLabel("相談内容").fill("今日の夕飯の献立を考えてください。");
+  await page
+    .getByLabel("相談内容")
+    .fill("知らない会社から保険の見直しを勧める電話がありました。怪しいか分からず、どうすればいいですか。");
   await page.getByRole("button", { name: "この内容で確認する" }).click();
 
   await expect(

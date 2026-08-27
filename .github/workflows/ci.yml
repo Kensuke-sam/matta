@@ -61,3 +61,33 @@ jobs:
           path: matta-standalone-linux-x64.tar.gz
           retention-days: 7
           if-no-files-found: error
+
+  publish-cloud9:
+    name: CI / publish Cloud9 runtime
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download standalone artifact
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: matta-standalone-linux-x64
+          path: cloud9-runtime
+
+      - name: Publish Cloud9 runtime branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan cloud9-runtime
+          git rm -rf .
+          mv cloud9-runtime/matta-standalone-linux-x64.tar.gz .
+          git add matta-standalone-linux-x64.tar.gz
+          git commit -m "Publish Cloud9 runtime for ${GITHUB_SHA}"
+          git push --force origin cloud9-runtime
